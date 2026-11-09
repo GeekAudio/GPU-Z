@@ -25,8 +25,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         win.setContentSize(NSSize(width: 860, height: 670))
         win.contentMinSize = NSSize(width: 840, height: 660)
         let autosaveName = "NVCodecTestOverviewNarrow-v141"
+        // Registering the name can restore the saved frame itself, so place the window last.
         win.setFrameAutosaveName(autosaveName)
-        if !win.setFrameUsingName(autosaveName) { win.center() }
+        let restored = win.setFrameUsingName(autosaveName)
+        Self.placeOnPrimaryScreen(win, restored: restored)
         win.makeKeyAndOrderFront(nil)
         window = win
 
@@ -36,6 +38,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         updater = coordinator
         coordinator.start(attachedTo: win)
+    }
+
+    static func placeOnPrimaryScreen(_ window: NSWindow, restored: Bool) {
+        // NSScreen.main follows the active window. The first screen is the system's primary display.
+        guard let screen = NSScreen.screens.first else {
+            if !restored { window.center() }
+            return
+        }
+        let frame = window.frame
+        let visible = screen.visibleFrame
+        let isOnPrimary = screen.frame.contains(NSPoint(x: frame.midX, y: frame.midY))
+        let origin = restored && isOnPrimary ? frame.origin
+            : NSPoint(x: visible.midX - frame.width / 2, y: visible.midY - frame.height / 2)
+        window.setFrameOrigin(NSPoint(
+            x: max(visible.minX, min(origin.x, visible.maxX - frame.width)),
+            y: min(max(origin.y, visible.minY), visible.maxY - frame.height)
+        ))
     }
 
     @objc func checkForUpdates(_ sender: Any?) { updater?.checkForUpdates(manual: true) }

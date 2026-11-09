@@ -88,7 +88,7 @@ enum CodecBench {
     private static let inputBufferCount = 8
 
     /// 方法公开给 UI 与导出报告；属于合成负载自检，不是画质或标准认证测试。
-    static let measurementDescription = "VideoToolbox 合成吞吐自检：NV12 8-bit，预生成 8 个完整且不可变的图案帧循环输入；1080p 120 帧、4K 48 帧，30 fps 时间戳，目标码率 8/30 Mbps。每次会话先预热 8 帧并排空，正式编码从强制关键帧开始；编码与解码均测 3 次，报告 FPS 中位数所在的完整一轮。使用单调时钟，计时含提交、回调及排空，不含会话创建和像素生成。核心参数设置失败时不纳入比较；仅所有提交帧均有有效输出、无丢帧及错误才通过。软硬件优先读取 VT 会话属性；软件会话若未报告属性，依据官方禁用硬件规格与属性缺省语义标明软件路径及证据来源；强制硬编优先注册的 NullMoth 编码器，否则标明系统硬编；解码需会话 GPU Registry ID 映射到 PCI vendor-id 0x10de 才确认 NVIDIA；GPU ID 缺失保留归属未知，不能仅凭系统硬解或加载了 NVDEC 库认定 NVIDIA。取消会等待当前驱动调用返回并安全排空，未开始项标为未测试。各编码器压缩策略和画质可能不同，FPS 不是等画质比较，也不是 Apple/NVIDIA 官方认证分数。"
+    static let measurementDescription = "VideoToolbox 合成吞吐自检：NV12 8-bit，预生成 8 个完整且不可变的图案帧循环输入；1080p 120 帧、4K 48 帧，30 fps 时间戳，目标码率 8/30 Mbps。每次会话先预热 8 帧并排空，正式编码从强制关键帧开始；编码与解码均测 3 次，报告 FPS 中位数所在的完整一轮。使用单调时钟，计时含提交、回调及排空，不含会话创建和像素生成。核心参数设置失败时不纳入比较；仅所有提交帧均有有效输出、无丢帧及错误才通过。软硬件优先读取 VT 会话属性；软件会话若未报告属性，依据官方禁用硬件规格与属性缺省语义标明软件路径及证据来源；强制硬编优先注册的 NullMoth 编码器，否则标明系统硬编；解码通过标准 GPU Registry ID 或 NVEncVT 会话回传的 PCI 设备 ID 核对 NVIDIA；两者同时返回时必须指向同一设备，缺少可验证身份时保留归属未知，不能仅凭系统硬解或加载了 NVDEC 库认定 NVIDIA。取消会等待当前驱动调用返回并安全排空，未开始项标为未测试。各编码器压缩策略和画质可能不同，FPS 不是等画质比较，也不是 Apple/NVIDIA 官方认证分数。"
 
     static func codecName(_ t: CMVideoCodecType) -> String {
         switch t {
@@ -170,7 +170,10 @@ enum CodecBench {
                 guard IORegistryEntryGetRegistryEntryID(entry, &id) == KERN_SUCCESS,
                       let data = IORegistryEntryCreateCFProperty(entry, "vendor-id" as CFString,
                           kCFAllocatorDefault, 0)?.takeRetainedValue() as? Data,
-                      data.count == 4 else { return nil }
+                      data.count == 4,
+                      let classCode = EnvProbe.pciNumber(IORegistryEntryCreateCFProperty(entry, "class-code" as CFString,
+                          kCFAllocatorDefault, 0)?.takeRetainedValue()),
+                      classCode >> 16 == 0x03 else { return nil }
                 let vendor = data.enumerated().reduce(UInt32(0)) { $0 | UInt32($1.element) << ($1.offset * 8) }
                 let model = IORegistryEntryCreateCFProperty(entry, "model" as CFString,
                     kCFAllocatorDefault, 0)?.takeRetainedValue()
