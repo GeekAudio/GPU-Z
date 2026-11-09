@@ -350,8 +350,8 @@ final class RunLogRecorder {
                     try self.session.event(message: "\(row.group) · \(row.item) · \(row.mode)：\(row.status.rawValue)", phase: "result",
                                            details: ["hardwareEvidence": row.hardwareEvidence, "gpuEvidence": row.gpuEvidence,
                                                      "nvidiaEvidence": row.nvidiaEvidence, "detail": row.detail])
-                    try self.session.capture(reportJSON: self.report())
                 }
+                self.persist { try self.session.capture(reportJSON: self.report()) }
             }
         }
     }

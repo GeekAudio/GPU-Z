@@ -260,19 +260,18 @@ final class TestModel: ObservableObject {
         }
     }
 
-    /// 历史仅从本机已有的结构化诊断记录读取，由 sheet 在后台调用。
+    /// 从独立的成绩档案读取，由历史页在后台调用。
     func testHistoryLoader() -> () throws -> [TestHistoryEntry] {
         let store = diagnosticStore
         return {
             guard let store else { return [] }
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
-            return try store.entries().compactMap { entry in
-                guard let text = try store.readReport(entry),
-                      let report = try? decoder.decode(CodecReport.self, from: Data(text.utf8)),
+            return try store.testHistorySnapshots().compactMap { entry in
+                guard let report = try? decoder.decode(CodecReport.self, from: Data(entry.reportJSON.utf8)),
                       report.schemaVersion == 1, !report.results.isEmpty else { return nil }
                 return TestHistoryEntry(id: entry.id, createdAt: entry.createdAt, report: report)
-            }.sorted { $0.createdAt > $1.createdAt }
+            }
         }
     }
 

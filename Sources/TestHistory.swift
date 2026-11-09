@@ -33,15 +33,17 @@ enum TestHistoryMatrix {
     static let cases = CodecTestPlan.cases
 
     static func rows(entries: [TestHistoryEntry]) -> [TestHistoryMatrixRow] {
-        newestFirst(entries).map { entry in
-            let report = entry.report
-            let cells = cases.map { testCase in cell(report: report, caseID: testCase.id) }
-            let plannedCount = plannedIDs(report).count
-            let passedCount = cells.filter { $0.value.hasSuffix(" FPS") }.count
-            return TestHistoryMatrixRow(id: entry.id, createdAt: entry.createdAt,
-                driverVersion: driverVersion(in: report), passedSummary: "\(passedCount)/\(plannedCount)",
-                context: contextDescription(report), cells: cells)
-        }
+        newestFirst(entries).map(row(for:))
+    }
+
+    static func row(for entry: TestHistoryEntry) -> TestHistoryMatrixRow {
+        let report = entry.report
+        let cells = cases.map { testCase in cell(report: report, caseID: testCase.id) }
+        let plannedCount = plannedIDs(report).count
+        let passedCount = cells.filter { $0.value.hasSuffix(" FPS") }.count
+        return TestHistoryMatrixRow(id: entry.id, createdAt: entry.createdAt,
+            driverVersion: driverVersion(in: report), passedSummary: "\(passedCount)/\(plannedCount)",
+            context: contextDescription(report), cells: cells)
     }
 
     private static func driverVersion(in report: CodecReport) -> TestHistoryDriverVersion {

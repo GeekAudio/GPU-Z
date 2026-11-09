@@ -37,7 +37,7 @@ struct FeedbackTests {
             guard let url = draft.url else { return }
             let parts = URLComponents(url: url, resolvingAgainstBaseURL: false)
             check(parts?.scheme == "https" && parts?.host == "github.com", "issue URL uses the fixed HTTPS GitHub destination")
-            check(parts?.path == "/GeekAudio/NVCodecTest/issues/new", "issue URL cannot change repository or endpoint")
+            check(parts?.path == "/GeekAudio/GPU-Z/issues/new", "issue URL cannot change repository or endpoint")
             check(parts?.user == nil && parts?.password == nil && parts?.fragment == nil, "user content cannot become credentials or URL fragments")
             check(Set(parts?.queryItems?.map(\.name) ?? []) == Set(["title", "body"]), "user content cannot inject query parameters")
             check(url.absoluteString.utf8.count <= maximum, "encoded issue URL obeys the byte limit")
@@ -63,9 +63,9 @@ struct FeedbackTests {
 
         let defaultTitle = GitHubFeedback.makeDraft(title: " \n\t", problem: "未填写标题", diagnostic: nil)
         check(defaultTitle.title == "GPU-Z 问题反馈", "an empty title uses the GPU-Z brand")
-        check(GitHubFeedback.repository == "GeekAudio/NVCodecTest"
+        check(GitHubFeedback.repository == "GeekAudio/GPU-Z"
               && GitHubFeedback.newIssueURL.host == "github.com"
-              && GitHubFeedback.newIssueURL.path == "/GeekAudio/NVCodecTest/issues/new",
+              && GitHubFeedback.newIssueURL.path == "/GeekAudio/GPU-Z/issues/new",
               "GPU-Z branding leaves the GitHub repository and issue endpoint unchanged")
 
         let withoutLog = GitHubFeedback.makeDraft(title: "仅描述问题", problem: "没有可用日志", diagnostic: nil)

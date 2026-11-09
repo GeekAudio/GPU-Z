@@ -204,6 +204,12 @@ struct DiagnosticLogEntry: Identifiable {
     let reportAvailable: Bool
 }
 
+struct TestHistorySnapshot: Codable {
+    let id: String
+    let createdAt: Date
+    let reportJSON: String
+}
+
 enum DiagnosticLogError: LocalizedError {
     case invalidReport
     case invalidSession
@@ -294,6 +300,7 @@ final class DiagnosticLogStore {
         }
         try ensureDirectory(self.rootURL)
         try withStoreLock {
+            try migrateTestHistory()
             try recoverInterruptedLocked()
             try enforceRetention(additionalBytes: 0, additionalSessions: 0, strict: false)
         }
@@ -337,10 +344,69 @@ final class DiagnosticLogStore {
         try data.write(to: url, options: .atomic)
         try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
+
+    // Reports live outside the diagnostic session rotation, under the same process lock.
+    private var historyDirectory: URL { rootURL.appendingPathComponent("TestHistory", isDirectory: true) }
+
+    private func saveTestHistory(_ reportJSON: String, for record: DiagnosticManifest) throws {
+        let data = Data(reportJSON.utf8)
+        guard let report = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              report["schemaVersion"] as? Int == 1,
+              let results = report["results"] as? [[String: Any]], !results.isEmpty else { return }
+        let compact = try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
+        let snapshot = TestHistorySnapshot(id: record.id, createdAt: record.createdAt,
+                                           reportJSON: String(decoding: compact, as: UTF8.self))
+        let file = historyDirectory.appendingPathComponent(record.id + ".json")
+        try write(encoder.encode(snapshot), to: file)
+    }
+
+    private func migrateTestHistory() throws {
+        try ensureDirectory(historyDirectory)
+        let marker = historyDirectory.appendingPathComponent(".migrated")
+        try rejectSymlink(marker)
+        guard !fm.fileExists(atPath: marker.path) else { return }
+        for record in try manifests() {
+            let file = try directory(record.id).appendingPathComponent("report.json")
+            try rejectSymlink(file)
+            guard fm.fileExists(atPath: file.path) else { continue }
+            let text = try String(contentsOf: file, encoding: .utf8)
+            if let redacted = try? DiagnosticRedactor.redactJSON(text) {
+                try saveTestHistory(redacted, for: record)
+            }
+        }
+        // A cleared history must not be populated again from the remaining feedback logs.
+        try write(Data(), to: marker)
+    }
+
+    private func testHistoryFiles() throws -> [URL] {
+        try fm.contentsOfDirectory(at: historyDirectory, includingPropertiesForKeys: [.isRegularFileKey]).filter {
+            guard $0.pathExtension == "json", UUID(uuidString: $0.deletingPathExtension().lastPathComponent) != nil else { return false }
+            try rejectSymlink($0)
+            guard try $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else {
+                throw DiagnosticLogError.unsafePath
+            }
+            return true
+        }
+    }
+
+    func testHistorySnapshots() throws -> [TestHistorySnapshot] {
+        try withStoreLock {
+            try testHistoryFiles().map { try decoder.decode(TestHistorySnapshot.self, from: Data(contentsOf: $0)) }
+        }
+    }
+
+    func clearTestHistory() throws {
+        try withStoreLock {
+            for file in try testHistoryFiles() { try fm.removeItem(at: file) }
+        }
+    }
+
     private func manifest(_ id: String) throws -> DiagnosticManifest {
         let url = try directory(id).appendingPathComponent("session.json")
         try rejectSymlink(url)
-        return try decoder.decode(DiagnosticManifest.self, from: Data(contentsOf: url))
+        let record = try decoder.decode(DiagnosticManifest.self, from: Data(contentsOf: url))
+        guard record.id == id else { throw DiagnosticLogError.invalidSession }
+        return record
     }
     private func save(_ manifest: DiagnosticManifest) throws {
         try write(encoder.encode(manifest), to: directory(manifest.id).appendingPathComponent("session.json"))
@@ -467,6 +533,7 @@ final class DiagnosticLogStore {
             guard record.state == .running else { throw DiagnosticLogError.sessionClosed }
             guard reportJSON.utf8.count <= limits.maxReportBytes * 4 else { throw DiagnosticLogError.reportTooLarge(limit: limits.maxReportBytes) }
             let redacted = try DiagnosticRedactor.redactJSON(reportJSON)
+            try saveTestHistory(redacted, for: record)
             let data = Data(redacted.utf8)
             guard data.count <= limits.maxReportBytes else { throw DiagnosticLogError.reportTooLarge(limit: limits.maxReportBytes) }
             let url = try directory(id).appendingPathComponent("report.json")

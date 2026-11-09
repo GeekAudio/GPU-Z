@@ -176,6 +176,38 @@ struct DiagnosticLogTests {
         let afterAgeLimit = try makeStore("age-retention", limits: ageLimits)
         check(try afterAgeLimit.entries().isEmpty, "expired finished sessions are removed after the retention period")
 
+        let testReport = #"{"schemaVersion":1,"results":[{"fps":120}],"token":"FIXTURE_HISTORY_PRIVATE"}"#
+        let legacy = try makeStore("legacy-history")
+        let oldRun = try legacy.begin(kind: "old benchmark")
+        try oldRun.finish(reportJSON: testReport)
+        try fm.removeItem(at: legacy.rootURL.appendingPathComponent("TestHistory"))
+        clock.addTimeInterval(2 * 24 * 60 * 60)
+        let historyStore = try makeStore("legacy-history", limits: DiagnosticLogLimits(maxSessions: 2, maxAgeDays: 1))
+        let migrated = try historyStore.testHistorySnapshots()
+        check(try historyStore.entries().isEmpty && migrated.map(\.id) == [oldRun.id],
+              "migration preserves a legacy result before its diagnostic session expires")
+        check(migrated.first?.reportJSON.contains("FIXTURE_HISTORY_PRIVATE") == false,
+              "retained benchmark reports are redacted")
+        for _ in 0..<3 {
+            let benchmark = try historyStore.begin(kind: "new benchmark")
+            try benchmark.finish(reportJSON: testReport)
+        }
+        try historyStore.begin(kind: "environment only").finish(reportJSON: #"{"schemaVersion":1,"results":[]}"#)
+        check(try historyStore.testHistorySnapshots().count == 4 && historyStore.entries().count == 2,
+              "result history survives count rotation and excludes environment-only records")
+        try historyStore.clear()
+        check(try historyStore.testHistorySnapshots().count == 4, "clearing diagnostic logs retains benchmark history")
+        let beforeClear = try historyStore.begin(kind: "benchmark before clear")
+        try beforeClear.finish(reportJSON: testReport)
+        try historyStore.clearTestHistory()
+        let reopened = try makeStore("legacy-history")
+        check(try reopened.testHistorySnapshots().isEmpty && reopened.entries().map(\.id) == [beforeClear.id],
+              "clearing results preserves diagnostic logs and cannot re-import old results on reopen")
+        let afterClearRun = try reopened.begin(kind: "benchmark after clear")
+        try afterClearRun.finish(reportJSON: testReport)
+        check(try reopened.testHistorySnapshots().map(\.id) == [afterClearRun.id],
+              "new results are retained normally after clearing history")
+
         let byteLimits = DiagnosticLogLimits(maxSessions: 20, maxAgeDays: 30, maxTotalBytes: 12000,
             maxEventBytes: 2048, maxEventsBytes: 4096, maxReportBytes: 4096)
         let byteStore = try makeStore("byte-retention", limits: byteLimits)

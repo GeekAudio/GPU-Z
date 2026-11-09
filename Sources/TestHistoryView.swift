@@ -2,21 +2,41 @@ import SwiftUI
 
 struct TestHistoryView: View {
     let loadHistory: () throws -> [TestHistoryEntry]
+    let clearHistory: () throws -> Void
 
     // `presentationMode` works with the app's macOS 11 deployment target.
     @Environment(\.presentationMode) private var presentationMode
     @State private var entries: [TestHistoryEntry] = []
     @State private var isLoading = true
     @State private var loadError: String?
+    @State private var clearError: String?
+    @State private var confirmsClear = false
     @State private var startedLoading = false
     @State private var detail: BenchRow?
     @State private var selectedResult: HistoryResultSelection?
 
-    private var matrixRows: [TestHistoryMatrixRow] {
-        TestHistoryMatrix.rows(entries: entries)
+    var body: some View {
+        if #available(macOS 12, *) {
+            content.alert("清空测试历史？", isPresented: $confirmsClear) {
+                Button("取消", role: .cancel) {}
+                Button("清空", role: .destructive) { reloadHistory(clearing: true) }
+            } message: {
+                Text(clearMessage)
+            }
+        } else {
+            content.alert(isPresented: $confirmsClear) {
+                Alert(title: Text("清空测试历史？"), message: Text(clearMessage),
+                      primaryButton: .destructive(Text("清空")) { reloadHistory(clearing: true) },
+                      secondaryButton: .cancel(Text("取消")))
+            }
+        }
     }
 
-    var body: some View {
+    private var clearMessage: String {
+        "这会永久删除本机保存的测试成绩。诊断日志和已导出的报告仍可查阅。"
+    }
+
+    private var content: some View {
         VStack(spacing: 0) {
             header
             mainContent
@@ -50,7 +70,9 @@ struct TestHistoryView: View {
                     .foregroundColor(DesignTokens.Text.secondary)
             }
             Spacer()
-            Button(action: reloadHistory) { Label("刷新", systemImage: "arrow.clockwise") }
+            Button { confirmsClear = true } label: { Label("清空历史…", systemImage: "trash") }
+                .disabled(isLoading || entries.isEmpty)
+            Button { reloadHistory() } label: { Label("刷新", systemImage: "arrow.clockwise") }
                 .disabled(isLoading).help("重新读取本机保存的测试记录")
             Button("关闭") { presentationMode.wrappedValue.dismiss() }
                 .keyboardShortcut(.cancelAction)
@@ -108,11 +130,11 @@ struct TestHistoryView: View {
             Hairline()
             ScrollView(.vertical) {
                 LazyVStack(spacing: 0) {
-                    ForEach(matrixRows) { row in
-                        HistoryRunRow(row: row,
-                            report: entries.first(where: { $0.id == row.id })?.report,
+                    ForEach(entries) { entry in
+                        HistoryRunRow(row: TestHistoryMatrix.row(for: entry),
+                            report: entry.report,
                             selection: selectedResult) { result in
-                                selectedResult = HistoryResultSelection(runID: row.id, caseID: result.id)
+                                selectedResult = HistoryResultSelection(runID: entry.id, caseID: result.id)
                                 detail = result
                             }
                         Hairline()
@@ -177,9 +199,9 @@ struct TestHistoryView: View {
 
     private var footer: some View {
         HStack(spacing: 6) {
-            Image(systemName: loadError == nil ? "info.circle" : "exclamationmark.triangle")
+            Image(systemName: loadError == nil && clearError == nil ? "info.circle" : "exclamationmark.triangle")
                 .accessibilityHidden(true)
-            Text(loadError.map { "刷新失败，保留上次记录：\($0)" }
+            Text(clearError.map { "清空历史失败：\($0)" } ?? loadError.map { "读取历史失败：\($0)" }
                  ?? "点击成绩查看详情；不同设备或输入的 FPS 不代表性能变化。")
                 .lineLimit(1)
             Spacer(minLength: 0)
@@ -191,25 +213,33 @@ struct TestHistoryView: View {
         .padding(.vertical, 12)
     }
 
-    private func reloadHistory() {
+    private func reloadHistory(clearing: Bool = false) {
         isLoading = true
         loadError = nil
+        clearError = nil
         let loader = loadHistory
+        let clear = clearHistory
         DispatchQueue.global(qos: .utility).async {
-            do {
-                let loaded = TestHistoryMatrix.newestFirst(try loader())
-                DispatchQueue.main.async {
+            let cleared = Result { if clearing { try clear() } }
+            let loaded = Result { TestHistoryMatrix.newestFirst(try loader()) }
+            DispatchQueue.main.async {
+                if case .failure(let error) = cleared {
+                    clearError = DiagnosticRedactor.redact(error.localizedDescription)
+                }
+                switch loaded {
+                case .success(let loaded):
                     entries = loaded
                     if let selection = selectedResult, !loaded.contains(where: { $0.id == selection.runID }) {
                         selectedResult = nil
                     }
-                    isLoading = false
+                case .failure(let error):
+                    if clearing, case .success = cleared {
+                        entries = []
+                        selectedResult = nil
+                    }
+                    loadError = DiagnosticRedactor.redact(error.localizedDescription)
                 }
-            } catch {
-                DispatchQueue.main.async {
-                    loadError = error.localizedDescription
-                    isLoading = false
-                }
+                isLoading = false
             }
         }
     }

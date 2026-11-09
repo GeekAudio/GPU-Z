@@ -53,7 +53,8 @@ struct MainView: View {
             case .methods: DetailWindow(title: "测量方法") { MeasurementMethodsView() }
             case .result(let row): ResultDetails(row: row).background(Color.codecBackground)
             case .history:
-                TestHistoryView(loadHistory: model.testHistoryLoader())
+                let store = model.diagnosticStore
+                TestHistoryView(loadHistory: model.testHistoryLoader(), clearHistory: { try store?.clearTestHistory() })
             case .feedback:
                 FeedbackView(refreshHistory: model.feedbackHistoryLoader(), deleteDiagnostic: { try model.deleteDiagnostic($0) },
                              clearHistory: { try model.diagnosticStore?.clear() }, storageNotice: model.diagnosticLogError)
@@ -208,7 +209,7 @@ struct MainView: View {
                 Text(model.diagnosticLogError == nil ? "日志仅存本机 · 反馈前可预览" : "日志留存异常，点击反馈查看")
                     .font(DesignTokens.Font.small).foregroundColor(.sub).lineLimit(1)
                 Spacer(minLength: 0)
-                Link(destination: URL(string: "https://github.com/GeekAudio/NVCodecTest")!) {
+                Link(destination: GitHubFeedback.repositoryURL) {
                     Label("GitHub", systemImage: "arrow.up.right.square")
                         .foregroundColor(DesignTokens.Text.secondary)
                 }.fixedSize().help("查看开源代码、版本和问题反馈")

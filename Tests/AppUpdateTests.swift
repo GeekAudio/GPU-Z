@@ -13,16 +13,16 @@ import Foundation
             var assets: [[String: Any]] = [[
                 "name": assetName ?? "GPU-Z-\(tag).dmg",
                 "size": 1_000_000,
-                "browser_download_url": assetURL ?? "https://github.com/GeekAudio/NVCodecTest/releases/download/\(tag)/GPU-Z-\(tag).dmg"
+                "browser_download_url": assetURL ?? "https://github.com/GeekAudio/GPU-Z/releases/download/\(tag)/GPU-Z-\(tag).dmg"
             ]]
             if let digest { assets[0]["digest"] = digest }
             if checksum {
                 assets.append(["name": "SHA256SUMS.txt", "size": 90,
-                    "browser_download_url": "https://github.com/GeekAudio/NVCodecTest/releases/download/\(tag)/SHA256SUMS.txt"])
+                    "browser_download_url": "https://github.com/GeekAudio/GPU-Z/releases/download/\(tag)/SHA256SUMS.txt"])
             }
             let object: [String: Any] = [
                 "tag_name": tag, "draft": false, "prerelease": prerelease,
-                "html_url": "https://github.com/GeekAudio/NVCodecTest/releases/tag/\(tag)", "assets": assets
+                "html_url": "https://github.com/GeekAudio/GPU-Z/releases/tag/\(tag)", "assets": assets
             ]
             return try! JSONSerialization.data(withJSONObject: object)
         }

@@ -103,7 +103,7 @@ enum AppUpdateTaskGate {
 enum AppUpdateFeed {
     static let maximumFeedBytes = 1_048_576
     static let maximumDMGBytes: Int64 = 250 * 1024 * 1024
-    private static let repository = "GeekAudio/NVCodecTest"
+    private static let repository = "GeekAudio/GPU-Z"
 
     static var latestURL: URL {
         URL(string: "https://api.github.com/repos/\(repository)/releases/latest")!

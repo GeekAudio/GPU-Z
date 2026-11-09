@@ -98,7 +98,7 @@ final class AppUpdateCoordinator: NSObject, URLSessionDataDelegate, URLSessionDo
         guard let http = response as? HTTPURLResponse, http.statusCode == 200,
               let url = response.url, url.scheme == "https" else { completionHandler(.cancel); return }
         if AppUpdateTaskGate.isCurrent(dataTask, current: responseTask), responseKind == .release,
-           url.host == "api.github.com", url.path == "/repos/GeekAudio/NVCodecTest/releases/latest",
+           url == AppUpdateFeed.latestURL,
            response.expectedContentLength <= Int64(AppUpdateFeed.maximumFeedBytes) {
             completionHandler(.allow); return
         }
@@ -130,7 +130,7 @@ final class AppUpdateCoordinator: NSObject, URLSessionDataDelegate, URLSessionDo
             completionHandler(nil); return
         }
         if AppUpdateTaskGate.isCurrent(task, current: responseTask), responseKind == .release {
-            completionHandler(url.host == "api.github.com" && url.path == "/repos/GeekAudio/NVCodecTest/releases/latest" ? request : nil)
+            completionHandler(url == AppUpdateFeed.latestURL ? request : nil)
             return
         }
         let allowed = ["github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com", "github-releases.githubusercontent.com"]

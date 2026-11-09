@@ -214,9 +214,9 @@ struct GitHubIssueDraft {
 }
 
 enum GitHubFeedback {
-    static let repository = "GeekAudio/NVCodecTest"
-    static let repositoryURL = URL(string: "https://github.com/GeekAudio/NVCodecTest")!
-    static let newIssueURL = URL(string: "https://github.com/GeekAudio/NVCodecTest/issues/new")!
+    static let repository = "GeekAudio/GPU-Z"
+    static let repositoryURL = URL(string: "https://github.com/\(repository)")!
+    static let newIssueURL = repositoryURL.appendingPathComponent("issues").appendingPathComponent("new")
     /// 本工具采用的保守兼容阈值；GitHub 官方仅说明过长 URL 会返回 414，未公布统一字节上限。
     static let defaultMaximumURLBytes = 7_000
     static let maximumAttachmentBytes = 25 * 1_000_000

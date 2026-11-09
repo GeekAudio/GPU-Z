@@ -607,7 +607,7 @@ struct FeedbackView: View {
             operationNotice = draft.url == nil
                 ? "已打开空白 issue 页面；请手动复制完整反馈"
                 : "已打开 GitHub 草稿，尚未提交或上传附件"
-        } else { activeAlert = .error("无法打开默认浏览器。可复制反馈后手动前往 github.com/GeekAudio/NVCodecTest/issues/new。") }
+        } else { activeAlert = .error("无法打开默认浏览器。可复制反馈后手动前往 \(GitHubFeedback.newIssueURL.absoluteString)。") }
     }
 
     private static func historyDetail(_ diagnostic: FeedbackDiagnostic) -> String {
