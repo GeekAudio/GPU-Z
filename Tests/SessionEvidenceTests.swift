@@ -105,6 +105,29 @@ struct SessionEvidenceTests {
         check(unknownSession(mixed) && unknownSession(reversed),
               "candidate order and multiple GPUs cannot change missing-session attribution")
 
+        func decoderDevice(_ device: CodecBench.GPUDeviceIdentity?, standardReported: Bool = false,
+                           standardPCI: UInt64? = nil, hardware: Bool = true) -> BenchOutcome {
+            var out = ready()
+            out.hardwareAccelerated = hardware
+            CodecBench.applyNVEncVTSessionGPUIdentity(device, standardReported: standardReported,
+                standardPCIRegistryID: standardPCI, into: &out)
+            CodecBench.finalizeAttribution(&out)
+            return out
+        }
+        let nvencvt = decoderDevice(nvidia)
+        check(nvencvt.isNVIDIAConfirmed && nvencvt.gpuRegistryID == nvidia.registryID,
+              "a verified NVEncVT PCI endpoint proves the hardware session identity")
+        check(decoderDevice(nvidia, standardReported: true, standardPCI: nvidia.registryID).isNVIDIAConfirmed,
+              "matching standard and NVEncVT PCI endpoints preserve confirmation")
+        check(unknownSession(decoderDevice(nvidia, standardReported: true, standardPCI: intel.registryID)) &&
+              unknownSession(decoderDevice(nvidia, standardReported: true)),
+              "a conflicting or ambiguous standard PCI endpoint leaves the device unknown")
+        check(unknownSession(decoderDevice(nil)) && unknownSession(decoderDevice(intel)),
+              "missing and wrong-vendor decoder evidence cannot claim NVIDIA")
+        let decoderSoftware = decoderDevice(nvidia, hardware: false)
+        check(decoderSoftware.attribution == .software && decoderSoftware.gpuRegistryID == nil,
+              "NVEncVT device evidence cannot change a software result")
+
         let intelSession = apply(intel.registryID, vendor: 0x8086, devices: [nvidia, intel])
         check(intelSession.gpuRegistryID == intel.registryID && intelSession.gpuVendorID == 0x8086
               && intelSession.gpuName == intel.name && intelSession.attribution == .otherHardware && !intelSession.isNVIDIAConfirmed,

@@ -158,6 +158,54 @@ enum CodecBench {
         return bytes.prefix(4).enumerated().reduce(UInt32(0)) { $0 | (UInt32($1.element) << ($1.offset * 8)) }
     }
 
+    /// Resolve a session ID to one PCI endpoint. A custom NVEncVT ID must already
+    /// name the PCI entry. A standard VT ID may name its accelerator service.
+    private static func pciDevice(registryID: UInt64, allowParents: Bool) -> GPUDeviceIdentity? {
+        var entry = IOServiceGetMatchingService(0, IORegistryEntryIDMatching(registryID))
+        guard entry != 0 else { return nil }
+        defer { IOObjectRelease(entry) }
+        for _ in 0..<16 {
+            if IOObjectConformsTo(entry, "IOPCIDevice") != 0 {
+                var id: UInt64 = 0
+                guard IORegistryEntryGetRegistryEntryID(entry, &id) == KERN_SUCCESS,
+                      let data = IORegistryEntryCreateCFProperty(entry, "vendor-id" as CFString,
+                          kCFAllocatorDefault, 0)?.takeRetainedValue() as? Data,
+                      data.count == 4 else { return nil }
+                let vendor = data.enumerated().reduce(UInt32(0)) { $0 | UInt32($1.element) << ($1.offset * 8) }
+                let model = IORegistryEntryCreateCFProperty(entry, "model" as CFString,
+                    kCFAllocatorDefault, 0)?.takeRetainedValue()
+                let name = (model as? String) ?? (model as? Data).flatMap {
+                    String(bytes: $0.prefix { $0 != 0 }, encoding: .utf8)
+                } ?? ""
+                return GPUDeviceIdentity(registryID: id, name: name, vendorID: vendor)
+            }
+            guard allowParents else { return nil }
+            var parents: io_iterator_t = 0
+            guard IORegistryEntryGetParentIterator(entry, kIOServicePlane, &parents) == KERN_SUCCESS
+            else { return nil }
+            let parent = IOIteratorNext(parents)
+            let second = IOIteratorNext(parents)
+            IOObjectRelease(parents)
+            if second != 0 { IOObjectRelease(second) }
+            guard parent != 0 else { return nil }
+            if second != 0 { IOObjectRelease(parent); return nil }
+            IOObjectRelease(entry)
+            entry = parent
+        }
+        return nil
+    }
+
+    private static let nvencvtDecoderDeviceKey = "org.nvenc.decoder-device.v1" as CFString
+
+    private static func nvencvtPCIRegistryID(_ value: CFTypeRef) -> UInt64? {
+        guard CFGetTypeID(value) == CFNumberGetTypeID(),
+              let number = value as? NSNumber,
+              number.int64Value > 0,
+              number == NSNumber(value: number.int64Value),
+              !["f", "d"].contains(String(cString: number.objCType)) else { return nil }
+        return number.uint64Value
+    }
+
     /// UsingGPURegistryID 为 nil 也可能是内置硬件，不据此推断软件或排除 NVIDIA。
     private static func captureSessionEvidence(_ session: VTSession, encoding: Bool,
                                               into out: inout BenchOutcome) {
@@ -180,6 +228,19 @@ enum CodecBench {
         let registryID = (gpuReading.value as? NSNumber)?.uint64Value
         out.gpuEvidence = propertyEvidence(gpuReading, key: gpuKey,
             renderedValue: registryID.map(String.init))
+        if !encoding && out.hardwareAccelerated == true {
+            let decoderDevice = property(session, nvencvtDecoderDeviceKey)
+            if let value = decoderDevice.value {
+                let pciID = nvencvtPCIRegistryID(value)
+                out.gpuEvidence += "；" + propertyEvidence(decoderDevice, key: nvencvtDecoderDeviceKey,
+                    renderedValue: pciID.map(String.init))
+                let pci = pciID.flatMap { pciDevice(registryID: $0, allowParents: false) }
+                let standardPCI = registryID.flatMap { pciDevice(registryID: $0, allowParents: true) }
+                applyNVEncVTSessionGPUIdentity(pci, standardReported: gpuReading.value != nil,
+                    standardPCIRegistryID: standardPCI?.registryID, into: &out)
+                return
+            }
+        }
         let sessionVendor = registryID.flatMap { vendorID(registryID: $0) }
         let devices = MTLCopyAllDevices().map { device in
             GPUDeviceIdentity(registryID: device.registryID, name: device.name,
@@ -193,6 +254,22 @@ enum CodecBench {
         let registryID: UInt64
         let name: String
         let vendorID: UInt32?
+    }
+
+    static func applyNVEncVTSessionGPUIdentity(_ device: GPUDeviceIdentity?, standardReported: Bool,
+                                               standardPCIRegistryID: UInt64?, into out: inout BenchOutcome) {
+        out.gpuRegistryID = nil
+        out.gpuVendorID = nil
+        out.gpuName = ""
+        guard out.hardwareAccelerated == true, let device, device.registryID != 0, device.vendorID == 0x10de,
+              !standardReported || standardPCIRegistryID == device.registryID else {
+            out.gpuEvidence += "；NVEncVT PCI 设备无法验证或与标准属性冲突，GPU 归属未知"
+            return
+        }
+        out.gpuRegistryID = device.registryID
+        out.gpuVendorID = device.vendorID
+        out.gpuName = device.name
+        out.gpuEvidence += "；NVEncVT 会话 PCI endpoint 已核对，vendor-id=0x10de"
     }
 
     /// 只有 VT 会话报告的 Registry ID 能填入会话字段；系统枚举仅补充环境候选。
@@ -248,7 +325,7 @@ enum CodecBench {
         } else if out.ok && out.gpuVendorID == 0x10de {
             out.isNVIDIAConfirmed = true
             out.attribution = .nvidiaConfirmed
-            out.nvidiaEvidence = "完整输出且 UsingHardware=true；会话 UsingGPURegistryID 映射的 IORegistry PCI vendor-id=0x10de（NVIDIA）"
+            out.nvidiaEvidence = "完整输出且 UsingHardware=true；会话 GPU 身份映射的 IORegistry PCI vendor-id=0x10de（NVIDIA）"
         } else if let vendor = out.gpuVendorID, vendor != 0x10de {
             out.attribution = .otherHardware
             out.nvidiaEvidence = String(format: "会话 GPU 的 PCI vendor-id=0x%04x，未确认 NVIDIA", vendor)
@@ -690,7 +767,7 @@ enum CodecBench {
         }
         collect(sink, into: &out)
         finalizeAttribution(&out, softwareRequested: mode == .software)
-        if out.isNVIDIAConfirmed { out.usedEngine = "NVIDIA 硬解（VT GPU ID + PCI vendor 核对）" }
+        if out.isNVIDIAConfirmed { out.usedEngine = out.gpuName.isEmpty ? "NVIDIA 硬解" : "NVIDIA 硬解 · " + out.gpuName }
         progress?(1, out.status == .cancelled ? "本轮已安全取消" : "本轮输出核验完成")
         return out
     }
