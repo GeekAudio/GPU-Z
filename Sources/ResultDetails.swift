@@ -64,10 +64,46 @@ struct ResultDetails: View {
     private var needsAttention: Bool {
         !hasMeasurement && row.status != .notTested || row.failureStage != nil || row.failureOSStatus != nil
     }
+    private var systemCPUUsageText: String {
+        guard row.status != .notTested else { return "待测" }
+        guard let value = row.statistics?.systemCPUUsagePercent, value.isFinite, value >= 0 else {
+            return "未采集"
+        }
+        return formattedCPUPercent(value)
+    }
+    private var workerProcessCPUUsageText: String {
+        guard row.status != .notTested else { return "待测" }
+        guard let value = row.statistics?.cpuUsagePercent, value.isFinite, value >= 0 else {
+            return "未采集"
+        }
+        return formattedCPUPercent(value)
+    }
+    private var workerCPUMillisecondsPerFrameText: String {
+        guard row.status != .notTested else { return "待测" }
+        guard let value = row.statistics?.cpuMillisecondsPerFrame, value.isFinite, value >= 0 else {
+            return "未采集"
+        }
+        return String(format: "%.2f ms/帧", value)
+    }
+    private var systemCPUUsageHelp: String {
+        "测量期间的整机 CPU 平均占用，包含系统编解码服务及其他后台活动。"
+    }
+    private var workerCPUUsageHelp: String {
+        "GPU-Z 测试进程在正式测量期间的 CPU 占用，按全部逻辑 CPU 容量归一。"
+    }
+    private func formattedCPUPercent(_ value: Double) -> String {
+        if value > 0, value < 0.1 { return "<0.1%" }
+        return String(format: "%.1f%%", value)
+    }
 
     private var copyText: String {
         var fields = ["\(row.group) · \(row.item) · \(row.mode)", "状态：\(row.status.rawValue)",
          "结果有效：\(hasMeasurement ? "是" : "否")", "原始成功标记：\(row.ok)", "FPS：\(row.fps)",
+         "整机 CPU 占用：\(systemCPUUsageText)",
+         "测试进程 CPU 占用：\(workerProcessCPUUsageText)",
+         "平均 CPU 时间（本项工作进程）：\(workerCPUMillisecondsPerFrameText)",
+         "整机 CPU 范围：测试期间的整机活动，包含系统编解码服务及其他后台任务",
+         "测试进程 CPU 范围：GPU-Z 测试进程",
          "硬件加速属性：\(row.hardwareAccelerated.map { String($0) } ?? "未报告")",
          "归属分类：\(row.attribution.rawValue)",
          "NVIDIA 已证实：\(row.isNVIDIAConfirmed ? "是" : "否")", "实际引擎：\(row.engine)",
@@ -113,6 +149,7 @@ struct ResultDetails: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     measurementSummary
+                    processCPUSummary
                     if let softwareRatio, softwareRatio.isFinite, softwareRatio > 0 {
                         softwareThroughputSummary(softwareRatio)
                     }
@@ -178,6 +215,41 @@ struct ResultDetails: View {
                 Text(measurementNote).font(DesignTokens.Font.small).foregroundColor(DesignTokens.Text.secondary)
             }
         }.modifier(PanelStyle())
+    }
+
+    private var processCPUSummary: some View {
+        ResultSection(title: "CPU 占用", note: "整机与测试进程") {
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("整机 CPU 使用率")
+                        .font(DesignTokens.Font.small.weight(.semibold))
+                        .foregroundColor(DesignTokens.Text.secondary)
+                    Text(systemCPUUsageText)
+                        .font(DesignTokens.Font.title1.monospacedDigit().weight(.semibold))
+                        .help(systemCPUUsageHelp)
+                        .accessibilityIdentifier("result-system-cpu-usage")
+                }
+                .help(systemCPUUsageHelp)
+
+                Text("测试期间的整机平均占用，包含系统编解码服务及其他后台活动。")
+                    .font(DesignTokens.Font.small)
+                    .foregroundColor(DesignTokens.Text.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Hairline()
+                HStack(alignment: .top, spacing: 16) {
+                    ResultMetric(title: "测试进程 CPU", value: workerProcessCPUUsageText,
+                                 note: "GPU-Z 测试进程")
+                        .help(workerCPUUsageHelp)
+                        .accessibilityIdentifier("result-worker-cpu-usage")
+                    ResultMetric(title: "平均 CPU 时间", value: workerCPUMillisecondsPerFrameText,
+                                 note: row.status == .notTested ? "" : "工作进程 · 每个有效帧")
+                        .help(workerCPUUsageHelp)
+                        .accessibilityIdentifier("result-worker-cpu-ms-per-frame")
+                }
+            }
+            .modifier(PanelStyle())
+        }
     }
 
     private var measurementNote: String {

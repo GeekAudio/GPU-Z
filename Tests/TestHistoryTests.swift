@@ -15,8 +15,10 @@ struct TestHistoryTests {
         let first = cases[0]
         let second = cases[1]
         let third = cases[2]
-        check(TestHistoryMatrix.cases.map(\.id) == CodecTestPlan.allCaseIDs && cases.count == 11,
-              "matrix columns use all eleven canonical cases in grid order")
+        check(TestHistoryMatrix.cases.map(\.id) == CodecTestPlan.allCaseIDs
+              && cases.count == 15 && CodecTestPlan.defaultCaseIDs.count == 14
+              && CodecTestPlan.softwareCaseIDs.count == 6,
+              "history preserves fifteen identities and the fourteen active default cases")
         check(CodecTestPlan.legacyCaseIDs.count == 9
               && Array(cases.prefix(9)).map(\.id) == CodecTestPlan.legacyCaseIDs,
               "the original nine history case identities remain stable")
@@ -33,10 +35,10 @@ struct TestHistoryTests {
         let fullReport = report(rows: [firstPassed, secondPassed, failed, cancelled, unverified, notTested], plan: nil)
         let fullEntry = TestHistoryEntry(id: "older", createdAt: now.addingTimeInterval(-60), report: fullReport)
         let fullMatrix = TestHistoryMatrix.rows(entries: [fullEntry])
-        check(fullMatrix.count == 1 && fullMatrix[0].cells.count == 11,
-              "a single saved history displays one row with all eleven columns")
+        check(fullMatrix.count == 1 && fullMatrix[0].cells.count == 15,
+              "a single saved history displays all fifteen supported case identities")
         check(fullMatrix[0].cells.map(\.caseID) == CodecTestPlan.allCaseIDs,
-              "each history row keeps canonical eleven-column order")
+              "each history row keeps canonical case order")
         check(fullMatrix[0].cells[0].value == "123.5 FPS"
               && fullMatrix[0].cells[1].value == "100.0 FPS",
               "successful finite FPS values are formatted to one decimal place")
@@ -57,17 +59,34 @@ struct TestHistoryTests {
         let historicalNine = TestHistoryMatrix.row(for: TestHistoryEntry(
             id: "historical-nine", createdAt: now, report: historicalNineReport))
         check(historicalNine.passedSummary == "9/9"
-              && historicalNine.cells.count == 11
+              && historicalNine.cells.count == 15
               && historicalNine.cells[9].value == "未选"
-              && historicalNine.cells[10].value == "未选",
+              && historicalNine.cells[10].value == "未选"
+              && historicalNine.cells[4].value == "120.0 FPS",
               "a prior complete nine-case history remains 9/9 when new 4K columns are added")
-        let currentFullPlan = report(rows: historicalNineReport.results, plan: CodecTestPlan.allCaseIDs)
+        let originalElevenCasePlan = Array(CodecTestPlan.allCaseIDs.prefix(11))
+        let currentFullPlan = report(rows: historicalNineReport.results, plan: originalElevenCasePlan)
         let currentFullRow = TestHistoryMatrix.row(for: TestHistoryEntry(
             id: "current-eleven", createdAt: now, report: currentFullPlan))
         check(currentFullRow.passedSummary == "9/11"
               && currentFullRow.cells[9].value == "未测"
-              && currentFullRow.cells[10].value == "未测",
-              "an explicit current eleven-case plan treats absent 4K results as untested")
+              && currentFullRow.cells[10].value == "未测"
+              && currentFullRow.cells[11...14].allSatisfy { $0.value == "未选" },
+              "a saved eleven-case report leaves the later software additions outside its original plan")
+        let currentDefaultPlan = report(rows: historicalNineReport.results, plan: CodecTestPlan.defaultCaseIDs)
+        let currentDefaultRow = TestHistoryMatrix.row(for: TestHistoryEntry(
+            id: "current-default", createdAt: now, report: currentDefaultPlan))
+        check(currentDefaultRow.passedSummary == "8/14"
+              && currentDefaultRow.cells[4].value == "未选"
+              && currentDefaultRow.cells[11...14].allSatisfy { $0.value == "未测" },
+              "the active default plan excludes the archived HEVC 1080p software-encode result")
+        let completeSoftwarePlan = report(rows: [], plan: Array(CodecTestPlan.softwareCaseIDs))
+        let completeSoftwareRow = TestHistoryMatrix.row(for: TestHistoryEntry(
+            id: "software-plan", createdAt: now, report: completeSoftwarePlan))
+        check(completeSoftwareRow.passedSummary == "0/6"
+              && completeSoftwareRow.cells[1].value == "未测"
+              && completeSoftwareRow.cells[11...14].allSatisfy { $0.value == "未测" },
+              "a complete software plan counts its six missing active cases as untested")
         check(fullMatrix[0].cells[0].help.contains("session GPU Registry ID confirmed")
               && fullMatrix[0].cells[0].help.contains("编码"),
               "cell help preserves case identity and session evidence")
@@ -79,9 +98,9 @@ struct TestHistoryTests {
         let selectedCells = TestHistoryMatrix.rows(entries: [
             TestHistoryEntry(id: "selected", createdAt: now, report: selectedReport)
         ])[0].cells
-        check(selectedCells.count == 11 && selectedCells[0].value == "123.5 FPS"
+        check(selectedCells.count == 15 && selectedCells[0].value == "123.5 FPS"
               && selectedCells[1].value == "失败" && selectedCells[2].value == "未选",
-              "subset reports still occupy eleven columns and mark out-of-plan cases unselected")
+              "subset reports still show all identities and mark out-of-plan cases unselected")
         let selectedRow = TestHistoryMatrix.rows(entries: [
             TestHistoryEntry(id: "selected", createdAt: now, report: selectedReport)
         ])[0]

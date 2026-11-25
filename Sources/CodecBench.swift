@@ -1,8 +1,28 @@
 import Foundation
+import Darwin
 import VideoToolbox
 import CoreVideo
 import Metal
 import IOKit
+
+private struct HostCPUTickSnapshot {
+    let user: natural_t
+    let system: natural_t
+    let idle: natural_t
+    let nice: natural_t
+
+    func usage(to end: HostCPUTickSnapshot) -> BenchSystemCPUUsage? {
+        // host_cpu_load_info counters are natural_t and wrap; subtract each before widening.
+        let userDelta = UInt64(end.user &- user)
+        let systemDelta = UInt64(end.system &- system)
+        let idleDelta = UInt64(end.idle &- idle)
+        let niceDelta = UInt64(end.nice &- nice)
+        let busyTicks = userDelta + systemDelta + niceDelta
+        let totalTicks = busyTicks + idleDelta
+        guard totalTicks > 0, busyTicks <= totalTicks else { return nil }
+        return BenchSystemCPUUsage(busyTicks: busyTicks, totalTicks: totalTicks)
+    }
+}
 
 // MARK: - 回调上下文
 
@@ -341,7 +361,9 @@ enum CodecBench {
             requestedFrames: result.requestedFrames, submittedFrames: result.submittedFrames,
             droppedFrames: result.droppedFrames, elapsed: result.elapsed,
             measurementCount: result.measurementCount, fpsMin: result.fpsMin,
-            fpsMax: result.fpsMax, bytesPerFrame: result.bytesPerFrame) : nil
+            fpsMax: result.fpsMax, bytesPerFrame: result.bytesPerFrame,
+            cpuUsage: result.status == .passed && result.ok ? result.cpuUsage : nil,
+            systemCPUUsage: result.status == .passed && result.ok ? result.systemCPUUsage : nil) : nil
         return BenchRow(group: group, item: item, mode: mode, ok: result.ok, fps: result.fps,
             engine: result.usedEngine.isEmpty ? "—" : result.usedEngine,
             detail: detail(result, encoding: group == "编码"), status: result.status,
@@ -408,6 +430,49 @@ enum CodecBench {
 
     private static func elapsed(since start: UInt64) -> Double {
         Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000_000
+    }
+
+    /// getrusage includes user and system CPU time from every thread in this worker process.
+    private static func processCPUTime() -> Double? {
+        var usage = rusage()
+        guard getrusage(RUSAGE_SELF, &usage) == 0 else { return nil }
+        let user = Double(usage.ru_utime.tv_sec) + Double(usage.ru_utime.tv_usec) / 1_000_000
+        let system = Double(usage.ru_stime.tv_sec) + Double(usage.ru_stime.tv_usec) / 1_000_000
+        let total = user + system
+        return total.isFinite && total >= 0 ? total : nil
+    }
+
+    /// Public Mach host statistics provide aggregate CPU ticks, including background work.
+    private static func hostCPUTicks() -> HostCPUTickSnapshot? {
+        var info = host_cpu_load_info_data_t()
+        let expectedCount = mach_msg_type_number_t(
+            MemoryLayout<host_cpu_load_info_data_t>.size / MemoryLayout<integer_t>.size)
+        var count = expectedCount
+        let capacity = Int(count)
+        let host = mach_host_self()
+        defer { _ = mach_port_deallocate(mach_task_self_, host) }
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: capacity) { rebound in
+                host_statistics(host, HOST_CPU_LOAD_INFO, rebound, &count)
+            }
+        }
+        guard result == KERN_SUCCESS,
+              count == expectedCount else { return nil }
+        return HostCPUTickSnapshot(user: info.cpu_ticks.0, system: info.cpu_ticks.1,
+                                   idle: info.cpu_ticks.2, nice: info.cpu_ticks.3)
+    }
+
+    private static func systemCPUUsage(from start: HostCPUTickSnapshot?,
+                                       to end: HostCPUTickSnapshot?) -> BenchSystemCPUUsage? {
+        guard let start, let end else { return nil }
+        return start.usage(to: end)
+    }
+
+    private static func cpuUsage(from start: Double?, to end: Double?) -> BenchCPUUsage? {
+        guard let start, let end, start.isFinite, end.isFinite, end > start else { return nil }
+        let logicalCPUCount = ProcessInfo.processInfo.processorCount
+        guard logicalCPUCount > 0 else { return nil }
+        return BenchCPUUsage(processCPUTime: end - start, logicalCPUCount: logicalCPUCount)
     }
 
     private static func collect(_ sink: FrameSink, into out: inout BenchOutcome) {
@@ -562,6 +627,8 @@ enum CodecBench {
         sink.reset()
         out = BenchOutcome()
         out.requestedFrames = frames
+        let cpuStart = processCPUTime()
+        let hostCPUStart = hostCPUTicks()
         let start = DispatchTime.now().uptimeNanoseconds
         for i in 0..<frames {
             if checkCancellation(cancellation, into: &out) { break }
@@ -575,6 +642,8 @@ enum CodecBench {
         progress?(0.9, cancellation?.isCancelled == true ? BenchCancellation.waitingDescription : "已提交测量帧，等待编码输出与排空（软件 HEVC 可能较久）")
         let drainStatus = VTCompressionSessionCompleteFrames(ses, untilPresentationTimeStamp: .invalid)
         out.elapsed = elapsed(since: start)
+        out.cpuUsage = cpuUsage(from: cpuStart, to: processCPUTime())
+        out.systemCPUUsage = systemCPUUsage(from: hostCPUStart, to: hostCPUTicks())
         if drainStatus != noErr { out.recordIssue("编码排空失败 (\(drainStatus))") }
         // 读取会话的实际路径，而非由厂商名、FPS 或请求模式猜测。
         _ = checkCancellation(cancellation, into: &out)
@@ -731,6 +800,8 @@ enum CodecBench {
         sink.reset()
         out = BenchOutcome()
         out.requestedFrames = samples.count
+        let cpuStart = processCPUTime()
+        let hostCPUStart = hostCPUTicks()
         let start = DispatchTime.now().uptimeNanoseconds
         for (index, sample) in samples.enumerated() {
             if checkCancellation(cancellation, into: &out) { break }
@@ -744,6 +815,8 @@ enum CodecBench {
         progress?(0.9, cancellation?.isCancelled == true ? BenchCancellation.waitingDescription : "等待解码输出与安全排空")
         let drainStatus = VTDecompressionSessionWaitForAsynchronousFrames(ses)
         out.elapsed = elapsed(since: start)
+        out.cpuUsage = cpuUsage(from: cpuStart, to: processCPUTime())
+        out.systemCPUUsage = systemCPUUsage(from: hostCPUStart, to: hostCPUTicks())
         if drainStatus != noErr { out.recordIssue("解码排空失败 (\(drainStatus))") }
         _ = checkCancellation(cancellation, into: &out)
         captureSessionEvidence(ses, encoding: false, into: &out)
@@ -830,11 +903,11 @@ enum CodecBench {
     static func runAll(progress: @escaping (Double, String) -> Void,
                        onRow: ((BenchRow) -> Void)? = nil,
                        cancellation: BenchCancellation? = nil) -> [BenchRow] {
-        (try? run(caseIDs: CodecTestPlan.allCaseIDSet, progress: progress,
+        (try? run(caseIDs: Set(CodecTestPlan.defaultCaseIDs), progress: progress,
                   onRow: onRow, cancellation: cancellation)) ?? []
     }
 
-    /// Runs only the selected visible cases, in the same stable order as the nine-card grid.
+    /// Runs the selected cases in the canonical test plan order.
     static func run(caseIDs requestedIDs: Set<String>,
                     progress: @escaping (Double, String) -> Void,
                     onRow: ((BenchRow) -> Void)? = nil,
@@ -845,6 +918,7 @@ enum CodecBench {
             EncCase(codec: h264, w: 1920, h: 1080, frames: 120, bitrate: 8_000_000, mode: .forcedHW),
             EncCase(codec: h264, w: 1920, h: 1080, frames: 120, bitrate: 8_000_000, mode: .software),
             EncCase(codec: h264, w: 3840, h: 2160, frames: 48, bitrate: 30_000_000, mode: .forcedHW),
+            EncCase(codec: h264, w: 3840, h: 2160, frames: 48, bitrate: 30_000_000, mode: .software),
             EncCase(codec: hevc, w: 1920, h: 1080, frames: 120, bitrate: 8_000_000, mode: .forcedHW),
             EncCase(codec: hevc, w: 1920, h: 1080, frames: 120, bitrate: 8_000_000, mode: .software),
             EncCase(codec: hevc, w: 3840, h: 2160, frames: 48, bitrate: 30_000_000, mode: .forcedHW),
@@ -853,8 +927,11 @@ enum CodecBench {
             (h264, 1920, .forcedHW),
             (h264, 1920, .software),
             (hevc, 1920, .forcedHW),
+            (hevc, 1920, .software),
             (h264, 3840, .forcedHW),
+            (h264, 3840, .software),
             (hevc, 3840, .forcedHW),
+            (hevc, 3840, .software),
         ]
         let total = Double(selectedIDs.count)
         func pendingAfterCancellation() -> BenchOutcome {

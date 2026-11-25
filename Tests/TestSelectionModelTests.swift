@@ -129,7 +129,7 @@ struct TestSelectionModelTests {
               && CodecTestPlan.hardwareComparisonCaseID(forSoftwareCaseID: firstID) == nil,
               "only approved software cases pair with a same-codec, same-size, same-group hardware case")
         model.selectCases(allIDs)
-        check(model.selectedCaseIDs == allIDs, "select-all restores all eleven cases")
+        check(model.selectedCaseIDs == allIDs, "explicit selection preserves all recognized IDs")
         model.selectCases([])
         check(model.selectedCaseIDs.isEmpty && !model.canStart,
               "clearing the selection disables a batch run")
@@ -164,8 +164,27 @@ struct TestSelectionModelTests {
 
         let plansBeforeInvalidComparison = factory.plans.count
         model.startSoftwareComparison(caseID: firstID)
+        model.startSoftwareComparison(caseID: cases[4].id)
         check(factory.plans.count == plansBeforeInvalidComparison && !model.running,
-              "a hardware case cannot be launched through the software comparison route")
+              "neither a hardware case nor the archived HEVC encode can start a software comparison")
+
+        let batchFactory = FixtureWorkers(directory: directory.appendingPathComponent("software-batches"),
+                                           scenarios: [.complete, .complete])
+        try FileManager.default.createDirectory(at: batchFactory.directory, withIntermediateDirectories: false)
+        let batchModel = makeTestModel(batchFactory)
+        let softwarePlan = CodecTestPlan.defaultCaseIDs.filter(CodecTestPlan.softwareCaseIDs.contains)
+        batchModel.startAllSoftwareTests()
+        check(batchModel.runningSoftwareTests && batchModel.plannedCaseIDs == softwarePlan && batchModel.totalCases == 6,
+              "one-click software launches only the six active software cases")
+        check(waitUntil { !batchModel.running } && batchModel.completedCount == 6,
+              "the software-only run completes with all its requested cases")
+        let pairedPlan = CodecTestPlan.defaultCaseIDs.filter(CodecTestPlan.softwareComparisonCaseIDs.contains)
+        batchModel.startAllSoftwareComparisons()
+        check(batchModel.runningSoftwareTests && batchModel.plannedCaseIDs == pairedPlan && batchModel.totalCases == 12,
+              "one-click comparison requests six paired software and hardware paths")
+        check(waitUntil { !batchModel.running } && !batchModel.runningSoftwareTests
+              && batchModel.completedCount == 12 && batchModel.selectedCaseIDs == hardwareIDs,
+              "the paired run completes without modifying the next hardware selection")
 
         // Set-based selections are sent in canonical grid order, independent of click order.
         model.selectCases([thirdID, firstID])

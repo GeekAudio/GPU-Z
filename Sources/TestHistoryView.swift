@@ -223,7 +223,7 @@ struct TestHistoryView: View {
         selectedRunID = entry.id
         selectedResult = HistoryResultSelection(runID: entry.id, caseID: result.id)
         detail = HistoryResultDetail(row: result,
-                                     softwareRatio: historySoftwareRatio(hardware: result, report: entry.report))
+                                     softwareRatio: historySoftwareRatio(for: result, report: entry.report))
     }
 
     private func reloadHistory(clearing: Bool = false) {
@@ -540,24 +540,44 @@ private struct HistorySoftwareSection: View {
     let cases: [CodecTestPlan.Case]
     let openResult: (BenchRow, TestHistoryEntry) -> Void
 
+    private let bands = [
+        HistoryHardwareBand(group: "编码", resolution: "1080p"),
+        HistoryHardwareBand(group: "编码", resolution: "4K"),
+        HistoryHardwareBand(group: "解码", resolution: "1080p"),
+        HistoryHardwareBand(group: "解码", resolution: "4K")
+    ]
+
+    private var visibleBands: [HistoryHardwareBand] {
+        bands.filter { band in
+            cases.contains {
+                $0.group == band.group && $0.item.hasSuffix(band.resolution)
+            }
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("软件对照").font(DesignTokens.Font.body.weight(.semibold))
                 Spacer()
-                if cases.contains(where: { $0.group == "编码" }) {
-                    Text("编码比值仅表示吞吐")
-                        .font(DesignTokens.Font.small)
+                Text("硬件 / 软件吞吐比")
+                    .font(DesignTokens.Font.small)
+                    .foregroundColor(DesignTokens.Text.secondary)
+                    .lineLimit(1)
+            }
+
+            ForEach(visibleBands) { band in
+                HStack(spacing: 8) {
+                    Text(band.title)
+                        .font(DesignTokens.Font.small.weight(.medium))
                         .foregroundColor(DesignTokens.Text.secondary)
-                        .lineLimit(1)
+                        .frame(width: 70, alignment: .leading)
+                    ForEach(softwareCases(in: band)) { testCase in
+                        softwareCell(testCase)
+                    }
                 }
+                .frame(height: 54)
             }
-            HStack(spacing: 8) {
-                ForEach(cases) { testCase in
-                    softwareCell(testCase)
-                }
-            }
-            .frame(height: 66)
         }
         .padding(14)
         .background(DesignTokens.Surface.content.opacity(0.55))
@@ -566,57 +586,51 @@ private struct HistorySoftwareSection: View {
             .strokeBorder(DesignTokens.Stroke.separator, lineWidth: 1))
     }
 
+    private func softwareCases(in band: HistoryHardwareBand) -> [CodecTestPlan.Case] {
+        let codecs = ["H.264", "HEVC"]
+        return codecs.compactMap { codec in
+            cases.first {
+                $0.group == band.group && $0.item == "\(codec) \(band.resolution)"
+            }
+        }
+    }
+
     @ViewBuilder
     private func softwareCell(_ testCase: CodecTestPlan.Case) -> some View {
         let cell = TestHistoryMatrix.cell(report: entry.report, caseID: testCase.id)
+        let matchingHardware = entry.report.results.filter {
+            $0.group == testCase.group && $0.item == testCase.item && $0.mode == "强制硬件"
+        }
+        let ratio = matchingHardware.count == 1
+            ? historySoftwareRatio(hardware: matchingHardware[0], report: entry.report) : nil
         if let result = savedResult(caseID: testCase.id) {
-            let matchingHardware = entry.report.results.filter {
-                $0.group == result.group && $0.item == result.item && $0.mode == "强制硬件"
-            }
-            let ratio = matchingHardware.count == 1
-                ? historySoftwareRatio(hardware: matchingHardware[0], report: entry.report) : nil
             Button { openResult(result, entry) } label: {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(testCase.item).font(DesignTokens.Font.small.weight(.medium)).lineLimit(1)
-                    HStack(spacing: 4) {
-                        Text(cell.value).font(DesignTokens.Font.small.monospacedDigit())
-                        if let ratio {
-                            Text("· \(String(format: "%.2f×", ratio)) 硬 / 软")
-                                .font(DesignTokens.Font.small.monospacedDigit())
-                                .foregroundColor(DesignTokens.Text.secondary)
-                                .lineLimit(1)
-                        }
-                    }
-                    if ratio == nil {
-                        Text("软件路径").font(DesignTokens.Font.small).foregroundColor(DesignTokens.Text.secondary)
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                .padding(.horizontal, 10)
-                .background(RoundedRectangle(cornerRadius: DesignTokens.corner)
-                    .fill(DesignTokens.Surface.window))
-                .overlay(RoundedRectangle(cornerRadius: DesignTokens.corner)
-                    .strokeBorder(DesignTokens.Stroke.separator, lineWidth: 1))
-                .contentShape(RoundedRectangle(cornerRadius: DesignTokens.corner))
+                HistoryScoreCell(title: testCase.item.hasPrefix("H.264") ? "H.264" : "HEVC",
+                                 value: cell.value,
+                                 status: softwareStatus(result, ratio: ratio),
+                                 selected: false,
+                                 measured: cell.value.hasSuffix(" FPS"))
             }
             .buttonStyle(.plain)
             .accessibilityLabel("\(testCase.group) \(testCase.item) \(testCase.mode)，\(cell.value)\(ratio.map { "，硬件与软件吞吐比 \(String(format: "%.2f", $0)) 倍" } ?? "")，查看详情")
             .accessibilityIdentifier("history-case-\(testCase.id)")
             .help(softwareHelp(testCase: testCase, cell: cell, ratio: ratio))
         } else {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(testCase.item).font(DesignTokens.Font.small.weight(.medium)).lineLimit(1)
-                Text(cell.value).font(DesignTokens.Font.small).foregroundColor(DesignTokens.Text.secondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .padding(.horizontal, 10)
-            .background(RoundedRectangle(cornerRadius: DesignTokens.corner)
-                .fill(DesignTokens.Surface.window.opacity(0.7)))
-            .overlay(RoundedRectangle(cornerRadius: DesignTokens.corner)
-                .strokeBorder(DesignTokens.Stroke.separator, lineWidth: 1))
-            .accessibilityElement(children: .combine)
-            .help(cell.help)
+            HistoryScoreCell(title: testCase.item.hasPrefix("H.264") ? "H.264" : "HEVC",
+                             value: cell.value,
+                             status: cell.help.components(separatedBy: "\n").first ?? "未测",
+                             selected: false,
+                             measured: false)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("\(testCase.group) \(testCase.item) \(testCase.mode)，\(cell.value)")
+                .help(cell.help)
         }
+    }
+
+    private func softwareStatus(_ row: BenchRow, ratio: Double?) -> String {
+        let classification = CodecPresentation.classification(row).0
+        guard let ratio else { return classification }
+        return "\(classification) · \(String(format: "%.2f×", ratio)) 硬 / 软"
     }
 
     private func savedResult(caseID: String) -> BenchRow? {
@@ -656,4 +670,18 @@ private func historySoftwareRatio(hardware: BenchRow, report: CodecReport) -> Do
     }
     guard matches.count == 1, let software = matches.first else { return nil }
     return hardware.throughputRatio(comparedTo: software)
+}
+
+private func historySoftwareRatio(for result: BenchRow, report: CodecReport) -> Double? {
+    let plannedIDs = report.plannedCaseIDs ?? CodecTestPlan.legacyCaseIDs
+    guard plannedIDs.contains(result.id) else { return nil }
+    if result.mode == "强制硬件" {
+        return historySoftwareRatio(hardware: result, report: report)
+    }
+    let hardwareRows = report.results.filter {
+        $0.id == CodecTestPlan.hardwareComparisonCaseID(forSoftwareCaseID: result.id)
+            && plannedIDs.contains($0.id)
+    }
+    guard hardwareRows.count == 1, let hardware = hardwareRows.first else { return nil }
+    return historySoftwareRatio(hardware: hardware, report: report)
 }

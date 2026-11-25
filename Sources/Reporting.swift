@@ -154,7 +154,22 @@ enum SelfTest {
             for row in results {
                 lines.append("\(row.group) · \(row.item) · \(row.mode) · \(statusLabel(row))")
                 lines.append("  原始字段：status=\(row.status.rawValue) · ok=\(row.ok) · fps=\(row.fps) · NVIDIA标记=\(row.isNVIDIAConfirmed)")
-                if row.hasValidMeasurement { lines.append(String(format: "  吞吐：%.2f fps", row.fps)) }
+                if row.hasValidMeasurement {
+                    lines.append(String(format: "  吞吐：%.2f fps", row.fps))
+                    if let systemPercent = row.statistics?.systemCPUUsagePercent {
+                        lines.append(String(format: "  整机 CPU：%.1f%%（测量期间，含后台负载）", systemPercent))
+                    } else {
+                        lines.append("  整机 CPU：未采集")
+                    }
+                    if let stats = row.statistics, let cpuPercent = stats.cpuUsagePercent,
+                       let cpuPerFrame = stats.cpuMillisecondsPerFrame {
+                        let usage = cpuPercent > 0 && cpuPercent < 0.1 ? "<0.1%" : String(format: "%.1f%%", cpuPercent)
+                        lines.append("  测试进程 CPU：\(usage)（占整机逻辑 CPU 容量） · "
+                                     + String(format: "%.2f ms/帧", cpuPerFrame))
+                    } else {
+                        lines.append("  测试进程 CPU：未采集")
+                    }
+                }
                 lines.append("  实际引擎：\(row.engine)")
                 if row.group == "编码" {
                     lines.append("  会话 EncoderID：\(row.encoderID.isEmpty ? "未报告" : row.encoderID)")
@@ -265,7 +280,7 @@ enum SelfTest {
 
     static func run(diagnosticsOnly: Bool = false) {
         print("GPU-Z · NVIDIA 编解码诊断 · \(diagnosticsOnly ? "环境诊断" : "完整测试")")
-        let plannedCaseIDs = diagnosticsOnly ? nil : CodecTestPlan.allCaseIDs
+        let plannedCaseIDs = diagnosticsOnly ? nil : CodecTestPlan.defaultCaseIDs
         var log: RunLogRecorder?
         do {
             let store = try DiagnosticLogStore()

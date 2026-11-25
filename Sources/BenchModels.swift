@@ -46,6 +46,52 @@ struct BenchStatistics: Codable {
     var fpsMin: Double = 0
     var fpsMax: Double = 0
     var bytesPerFrame = 0
+    var cpuUsage: BenchCPUUsage? = nil
+    var systemCPUUsage: BenchSystemCPUUsage? = nil
+
+    /// Percent of total logical CPU capacity; 100% means all logical CPUs.
+    var cpuUsagePercent: Double? {
+        guard let cpuUsage, cpuUsage.isValid,
+              elapsed.isFinite, elapsed > 0 else { return nil }
+        let percent = cpuUsage.processCPUTime / elapsed / Double(cpuUsage.logicalCPUCount) * 100
+        // Small tolerance accounts for getrusage's microsecond resolution at the sample edges.
+        guard percent.isFinite, percent >= 0, percent <= 100.5 else { return nil }
+        return min(percent, 100)
+    }
+
+    /// Process CPU time per successfully produced frame, independent of core count.
+    var cpuMillisecondsPerFrame: Double? {
+        guard let cpuUsage, cpuUsage.isValid, frames > 0 else { return nil }
+        let milliseconds = cpuUsage.processCPUTime * 1_000 / Double(frames)
+        return milliseconds.isFinite && milliseconds > 0 ? milliseconds : nil
+    }
+
+    /// Whole-machine busy time, including background processes, during the trial window.
+    var systemCPUUsagePercent: Double? {
+        guard let systemCPUUsage, systemCPUUsage.isValid else { return nil }
+        let percent = Double(systemCPUUsage.busyTicks) / Double(systemCPUUsage.totalTicks) * 100
+        return percent.isFinite && (0...100).contains(percent) ? percent : nil
+    }
+}
+
+/// CPU time used by the codec worker process during one measured trial.
+struct BenchCPUUsage: Codable, Equatable {
+    let processCPUTime: Double
+    let logicalCPUCount: Int
+
+    fileprivate var isValid: Bool {
+        processCPUTime.isFinite && processCPUTime > 0 && logicalCPUCount > 0
+    }
+}
+
+/// Host-wide CPU tick delta during one measured trial; busy includes user, system and nice.
+struct BenchSystemCPUUsage: Codable, Equatable {
+    let busyTicks: UInt64
+    let totalTicks: UInt64
+
+    fileprivate var isValid: Bool {
+        totalTicks > 0 && busyTicks <= totalTicks
+    }
 }
 
 struct VTSessionPropertyEvidence: Codable, Equatable {
@@ -153,6 +199,8 @@ struct BenchOutcome {
     var failureOSStatus: Int32?
     var usedEngine = ""
     var bytesPerFrame = 0
+    var cpuUsage: BenchCPUUsage?
+    var systemCPUUsage: BenchSystemCPUUsage?
     var samples: [CMSampleBuffer] = []
 
     mutating func recordIssue(_ message: String) {

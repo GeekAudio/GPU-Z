@@ -135,6 +135,9 @@ final class TestModel: ObservableObject {
     var decodeRows: [BenchRow] { results.filter { $0.group == "解码" } }
     var tested: Bool { !results.isEmpty }
     var canRun: Bool { !running && !refreshing && !env.isEmpty }
+    var runningSoftwareTests: Bool {
+        running && !CodecTestPlan.softwareCaseIDs.isDisjoint(with: plannedCaseIDs ?? [])
+    }
     var canStart: Bool { canRun && !selectedCaseIDs.isEmpty }
     var canExport: Bool { !running && !refreshing && !env.isEmpty }
     var displayedCaseIDs: Set<String> {
@@ -169,10 +172,15 @@ final class TestModel: ObservableObject {
 
     func startSingle(_ id: String) { start(caseIDs: [id]) }
 
+    func startAllSoftwareTests() { start(caseIDs: CodecTestPlan.softwareCaseIDs) }
+
+    func startAllSoftwareComparisons() { start(caseIDs: CodecTestPlan.softwareComparisonCaseIDs) }
+
     /// Runs a software comparison beside its matching hardware case without changing
     /// the hardware-only selection that will be used for the next regular round.
     func startSoftwareComparison(caseID: String) {
-        guard let hardwareCaseID = CodecTestPlan.hardwareComparisonCaseID(forSoftwareCaseID: caseID) else { return }
+        guard CodecTestPlan.softwareCaseIDs.contains(caseID),
+              let hardwareCaseID = CodecTestPlan.hardwareComparisonCaseID(forSoftwareCaseID: caseID) else { return }
         start(caseIDs: [hardwareCaseID, caseID])
     }
 
@@ -190,7 +198,7 @@ final class TestModel: ObservableObject {
         progress = 0
         status = "准备测试会话…"
         let existingStore = diagnosticStore
-        let kind = plan.count == CodecTestPlan.allCaseIDs.count ? "完整测试" : (plan.count == 1 ? "单项测试" : "所选项目测试")
+        let kind = plan == CodecTestPlan.defaultCaseIDs ? "完整测试" : (plan.count == 1 ? "单项测试" : "所选项目测试")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let log = self?.makeLog(existing: existingStore, kind: kind, plannedCaseIDs: plan)
             DispatchQueue.main.async { self?.activeLog = log }

@@ -73,7 +73,7 @@ enum Snapshot {
                     if let environment = event.environment { measuredSnapshot = environment; model.applyEnvironment(environment) }
                     if let row = event.row { rows.append(row) }
                 }, onDiagnostic: { FileHandle.standardError.write(Data(($0 + "\n").utf8)) })
-                let plan = CodecTestPlan.allCaseIDs
+                let plan = CodecTestPlan.defaultCaseIDs
                 applyResults(rows, to: model, wasCancelled: completion.cancelled, plannedCaseIDs: plan)
                 SelfTest.saveOutputs(snapshot: measuredSnapshot, results: rows, wasCancelled: completion.cancelled,
                                      plannedCaseIDs: plan)

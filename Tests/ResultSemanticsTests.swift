@@ -23,11 +23,11 @@ struct ResultSemanticsTests {
         func row(group: String = "编码", item: String = "H.264 1080p", mode: String = "强制硬件",
                  status: BenchStatus = .passed, ok: Bool = true, hardware: Bool? = true, fps: Double? = nil,
                  attribution: BenchAttribution = .unknown, nvidia: Bool = false,
-                 fixture: DecodeFixtureEvidence? = nil) -> BenchRow {
+                 fixture: DecodeFixtureEvidence? = nil, statistics: BenchStatistics? = nil) -> BenchRow {
             BenchRow(group: group, item: item, mode: mode, ok: ok, fps: fps ?? (ok ? 240 : 0),
                      engine: "fixture engine", detail: "固定测试证据", status: status,
                      hardwareAccelerated: hardware, attribution: attribution,
-                     isNVIDIAConfirmed: nvidia, decodeFixtureEvidence: fixture)
+                     isNVIDIAConfirmed: nvidia, decodeFixtureEvidence: fixture, statistics: statistics)
         }
         func reportJSON(_ value: String) throws -> CodecReport {
             let decoder = JSONDecoder()
@@ -48,6 +48,38 @@ struct ResultSemanticsTests {
 
         // Dashboard/FPS callers share this nonserialized validity boundary.
         check(row().hasValidMeasurement, "passed, successful and positive finite FPS is a valid measurement")
+        let cpuSample = BenchStatistics(frames: 120, requestedFrames: 120, submittedFrames: 120, elapsed: 0.5,
+            cpuUsage: BenchCPUUsage(processCPUTime: 0.24, logicalCPUCount: 8),
+            systemCPUUsage: BenchSystemCPUUsage(busyTicks: 48, totalTicks: 120))
+        check(cpuSample.cpuUsagePercent.map { abs($0 - 6) < 0.0001 } == true
+              && cpuSample.cpuMillisecondsPerFrame.map { abs($0 - 2) < 0.0001 } == true,
+              "CPU percent uses elapsed time and logical CPU count, while per-frame time uses output frames")
+        check(cpuSample.systemCPUUsagePercent.map { abs($0 - 40) < 0.0001 } == true,
+              "system CPU percent comes from busy and total ticks independently of worker CPU time")
+        let cpuResult = row(statistics: cpuSample)
+        let cpuReportText = SelfTest.renderText(env: [], encoders: [], results: [cpuResult])
+        check(cpuReportText.contains("测试进程 CPU：6.0%") && cpuReportText.contains("2.00 ms/帧")
+              && cpuReportText.contains("整机 CPU：40.0%（测量期间，含后台负载）"),
+              "text reports distinguish machine load from the worker's normalized CPU percent and per-frame time")
+        let cpuJSON = try SelfTest.renderJSON(env: [], encoders: [], results: [cpuResult])
+        let decodedCPU = try reportJSON(cpuJSON).results.first?.statistics
+        let redactedCPU = try reportJSON(DiagnosticRedactor.redactJSON(cpuJSON)).results.first?.statistics
+        check(decodedCPU?.cpuUsage == cpuSample.cpuUsage && redactedCPU?.cpuUsage == cpuSample.cpuUsage
+              && decodedCPU?.systemCPUUsage == cpuSample.systemCPUUsage
+              && redactedCPU?.systemCPUUsage == cpuSample.systemCPUUsage,
+              "report encoding and diagnostic-history redaction preserve the raw CPU evidence")
+        let oldStats = BenchStatistics(frames: 120, requestedFrames: 120, submittedFrames: 120, elapsed: 0.5)
+        let legacyCPUReport = try SelfTest.renderJSON(env: [], encoders: [], results: [row(statistics: oldStats)])
+        let decodedLegacyCPU = try reportJSON(legacyCPUReport).results.first?.statistics
+        check(!legacyCPUReport.contains("cpuUsage") && decodedLegacyCPU?.cpuUsagePercent == nil
+              && decodedLegacyCPU?.cpuMillisecondsPerFrame == nil && decodedLegacyCPU?.systemCPUUsagePercent == nil,
+              "an older report with benchmark statistics and no CPU evidence never shows a made-up percent")
+        let invalidCPU = BenchStatistics(frames: 120, requestedFrames: 120, submittedFrames: 120, elapsed: 0.5,
+            cpuUsage: BenchCPUUsage(processCPUTime: -0.1, logicalCPUCount: 8),
+            systemCPUUsage: BenchSystemCPUUsage(busyTicks: 2, totalTicks: 1))
+        check(invalidCPU.cpuUsagePercent == nil && invalidCPU.cpuMillisecondsPerFrame == nil
+              && invalidCPU.systemCPUUsagePercent == nil,
+              "invalid CPU counters are not displayed")
         check(!row(fps: 0).hasValidMeasurement && !row(fps: -1).hasValidMeasurement,
               "zero and negative FPS cannot become a displayed measurement")
         check(!row(fps: .nan).hasValidMeasurement && !row(fps: .infinity).hasValidMeasurement

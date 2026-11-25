@@ -1,6 +1,6 @@
 import Foundation
 
-/// Canonical identities shared by the eleven cards, worker protocol and report rows.
+/// Canonical identities shared by the test matrices, worker protocol and report rows.
 /// IDs intentionally use BenchRow's existing group|item|mode representation.
 enum CodecTestPlan {
     struct Case: Hashable, Identifiable {
@@ -22,13 +22,25 @@ enum CodecTestPlan {
         Case(group: "解码", item: "H.264 1080p", mode: "软件解码"),
         Case(group: "解码", item: "HEVC 1080p", mode: "强制硬件"),
         Case(group: "解码", item: "H.264 4K", mode: "强制硬件"),
-        Case(group: "解码", item: "HEVC 4K", mode: "强制硬件")
+        Case(group: "解码", item: "HEVC 4K", mode: "强制硬件"),
+        Case(group: "编码", item: "H.264 4K", mode: "软件编码"),
+        Case(group: "解码", item: "HEVC 1080p", mode: "软件解码"),
+        Case(group: "解码", item: "H.264 4K", mode: "软件解码"),
+        Case(group: "解码", item: "HEVC 4K", mode: "软件解码")
     ]
 
     static let allCaseIDs = cases.map(\.id)
     static let allCaseIDSet = Set(allCaseIDs)
+    // Keep older reports and explicitly selected worker invocations readable.
+    // The slow HEVC software encoder is excluded from current batch runs.
+    private static let legacyHEVCSoftwareEncodeID = id(group: "编码", item: "HEVC 1080p", mode: "软件编码")
+    static let defaultCaseIDs = allCaseIDs.filter { $0 != legacyHEVCSoftwareEncodeID }
     /// Default GUI round: hardware encode/decode cases only. Software comparisons remain opt-in.
     static let hardwareCaseIDs = Set(cases.filter { $0.mode == "强制硬件" }.map(\.id))
+    static let softwareCaseIDs = Set(defaultCaseIDs).subtracting(hardwareCaseIDs)
+    static let softwareComparisonCaseIDs = softwareCaseIDs.union(
+        softwareCaseIDs.compactMap { hardwareComparisonCaseID(forSoftwareCaseID: $0) }
+    )
     /// Schema-version-1 reports without an explicit plan came from the original nine-case matrix.
     static let legacyCaseIDs = Array(allCaseIDs.prefix(9))
 
@@ -65,9 +77,9 @@ enum CodecTestPlan {
     }
 
     /// Validates explicit selections and returns them in the grid's stable order.
-    /// `nil` means the legacy/default full matrix; an empty selection is always an error.
+    /// `nil` selects the current full matrix; an empty selection is always an error.
     static func validate(_ requestedIDs: [String]?) throws -> [String] {
-        guard let requestedIDs else { return allCaseIDs }
+        guard let requestedIDs else { return defaultCaseIDs }
         guard !requestedIDs.isEmpty else { throw SelectionError.empty }
 
         var seen = Set<String>()

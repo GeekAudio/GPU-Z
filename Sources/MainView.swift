@@ -134,7 +134,7 @@ struct MainView: View {
                 Spacer()
                 Button("软件对照…") { sheet = .softwareComparison }
                     .buttonStyle(NativeButtonStyle())
-                    .disabled(model.running || model.refreshing)
+                    .disabled(model.refreshing || (model.running && !model.runningSoftwareTests))
                     .accessibilityIdentifier("software-comparison")
                     .help("按需运行软件编码与解码对照")
                 Text("已选 \(hardwareSelectionCount)/\(CodecTestPlan.hardwareCaseIDs.count)").font(DesignTokens.Font.small).foregroundColor(.sub)

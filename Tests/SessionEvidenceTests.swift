@@ -19,9 +19,12 @@ struct SessionEvidenceTests {
             CodecTestPlan.id(group: "解码", item: "HEVC 1080p", mode: "强制硬件"),
             CodecTestPlan.id(group: "解码", item: "H.264 4K", mode: "强制硬件"),
             CodecTestPlan.id(group: "解码", item: "HEVC 4K", mode: "强制硬件"),
+            CodecTestPlan.id(group: "解码", item: "HEVC 1080p", mode: "软件解码"),
+            CodecTestPlan.id(group: "解码", item: "H.264 4K", mode: "软件解码"),
+            CodecTestPlan.id(group: "解码", item: "HEVC 4K", mode: "软件解码"),
         ]
         check(decodePlan.map(\.id) == expectedDecodeIDs,
-              "decode session evidence plan includes the original three rows and appended H.264/HEVC 4K hardware cases")
+              "decode session evidence plan preserves existing identities and covers all four software and hardware pairs")
         check(CodecTestPlan.legacyCaseIDs == Array(CodecTestPlan.allCaseIDs.prefix(9)),
               "the session evidence model keeps the original nine-case report boundary")
 

@@ -98,7 +98,7 @@ if CommandLine.arguments.contains("--help") {
     print("""
     GPU-Z — 视频编解码诊断
       --diagnose                   仅采集驱动与环境证据
-      --selftest                   运行完整十一项矩阵；Ctrl-C 请求安全取消
+      --selftest                   运行八项硬件与六项软件测试；Ctrl-C 请求安全取消
       --output <path.txt|path.json> 保存报告（默认 /tmp/nvcodec-selftest.txt）
       --json-output <path.json>    同时保存结构化报告
       --cold-check                 独立进程检测 H.264/HEVC 首次硬编硬解

@@ -9,19 +9,30 @@ import Foundation
   }
 
   let ids=CodecTestPlan.allCaseIDs
-  check(ids.count==11 && Set(ids).count==11,"canonical plan has eleven unique test identities")
+  check(ids.count==15 && Set(ids).count==15,"catalog preserves fifteen unique test identities")
   check(CodecTestPlan.legacyCaseIDs.count==9 && Array(ids.prefix(9))==CodecTestPlan.legacyCaseIDs,
         "the original nine case IDs remain stable and ordered")
-  check(Array(ids.suffix(2))==[
+  check(Array(ids[9..<11])==[
     CodecTestPlan.id(group:"解码",item:"H.264 4K",mode:"强制硬件"),
     CodecTestPlan.id(group:"解码",item:"HEVC 4K",mode:"强制硬件")
   ],"4K hardware decode cases append after the original matrix")
-  check(try CodecTestPlan.validate(nil)==ids,"no selection preserves the full matrix")
+  let softwareIDs=CodecTestPlan.softwareCaseIDs
+  let defaults=CodecTestPlan.defaultCaseIDs
+  let legacyHEVC=CodecTestPlan.id(group:"编码",item:"HEVC 1080p",mode:"软件编码")
+  let slowHEVC4K=CodecTestPlan.id(group:"编码",item:"HEVC 4K",mode:"软件编码")
+  let pairedHardware=Set(softwareIDs.compactMap(CodecTestPlan.hardwareComparisonCaseID(forSoftwareCaseID:)))
+  check(softwareIDs.count==6 && pairedHardware.count==6 && pairedHardware.isSubset(of:CodecTestPlan.hardwareCaseIDs),
+        "the six software cases pair one-to-one with six hardware cases")
+  check(defaults.count==14 && !defaults.contains(legacyHEVC) && !ids.contains(slowHEVC4K),
+        "the default full matrix excludes both HEVC software encodes")
+  check(try CodecTestPlan.validate([legacyHEVC])==[legacyHEVC],
+        "the previous HEVC 1080p software identity remains explicitly readable and runnable")
+  check(try CodecTestPlan.validate(nil)==defaults,"no selection preserves the current full matrix")
   let shuffled=[ids[8],ids[2],ids[6]]
   check(try CodecTestPlan.validate(shuffled)==[ids[2],ids[6],ids[8]],"subset is normalized to grid order")
   check(try CodecTestPlan.arguments(for:Set(shuffled))==["--case-id",ids[2],"--case-id",ids[6],"--case-id",ids[8]],"selection args are canonical and repeatable")
   check(try CodecTestPlan.selection(in:["--codec-worker"]+CodecTestPlan.arguments(for:Set(shuffled)))==[ids[2],ids[6],ids[8]],"worker receives selected IDs")
-  check(try CodecTestPlan.selection(in:["--codec-worker"])==ids,"worker arguments without selection default to all eleven current cases")
+  check(try CodecTestPlan.selection(in:["--codec-worker"])==defaults,"worker arguments without selection default to the fourteen active cases")
   rejects({ _ = try CodecTestPlan.validate([]) },"empty selection must fail")
   rejects({ _ = try CodecTestPlan.validate([ids[0],ids[0]]) },"duplicate IDs must fail")
   rejects({ _ = try CodecTestPlan.validate(["unknown|case|id"]) },"unknown IDs must fail")
@@ -42,7 +53,8 @@ import Foundation
   let rows=CodecTestPlan.cases.map { item in
    BenchRow(group:item.group,item:item.item,mode:item.mode,ok:false,fps:0,engine:"",detail:"fixture only",status:.notTested)
   }
-  let rowLines=try rows.map { try emit(json(CodecWorkerEvent(kind:"row",row:$0))) }.joined()
+  let rowLines=try rows.filter { defaults.contains($0.id) }
+   .map { try emit(json(CodecWorkerEvent(kind:"row",row:$0))) }.joined()
   let complete=try emit(json(CodecWorkerEvent(kind:"complete",cancelled:false)))
   func script(_ name:String,_ body:String) throws -> URL {
    let url=root.appendingPathComponent(name+".sh");try body.write(to:url,atomically:true,encoding:.utf8);return url
@@ -59,8 +71,8 @@ import Foundation
   let normal=try script("normal",fragmented+"printf '%s\\n' 'driver diagnostic fixture' >&2\n"+rowLines+complete)
   var received:[BenchRow]=[],diagnostics:[String]=[]
   let result=client(normal).run(onEvent:{if let row=$0.row {received.append(row)}},onDiagnostic:{diagnostics.append($0)})
-  check(result.complete && !result.cancelled,"fragmented environment and eleven canonical rows complete")
-  check(received.map(\.id)==ids,"full worker preserves canonical row order")
+  check(result.complete && !result.cancelled,"fragmented environment and fourteen current rows complete")
+  check(received.map(\.id)==defaults,"full worker preserves canonical row order")
   check(diagnostics.contains("driver diagnostic fixture"),"driver stderr drains before completion")
 
   let selected=[ids[2],ids[6]]
