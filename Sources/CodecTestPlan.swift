@@ -1,6 +1,6 @@
 import Foundation
 
-/// Canonical identities shared by the nine cards, worker protocol and report rows.
+/// Canonical identities shared by the eleven cards, worker protocol and report rows.
 /// IDs intentionally use BenchRow's existing group|item|mode representation.
 enum CodecTestPlan {
     struct Case: Hashable, Identifiable {
@@ -20,11 +20,29 @@ enum CodecTestPlan {
         Case(group: "编码", item: "HEVC 4K", mode: "强制硬件"),
         Case(group: "解码", item: "H.264 1080p", mode: "强制硬件"),
         Case(group: "解码", item: "H.264 1080p", mode: "软件解码"),
-        Case(group: "解码", item: "HEVC 1080p", mode: "强制硬件")
+        Case(group: "解码", item: "HEVC 1080p", mode: "强制硬件"),
+        Case(group: "解码", item: "H.264 4K", mode: "强制硬件"),
+        Case(group: "解码", item: "HEVC 4K", mode: "强制硬件")
     ]
 
     static let allCaseIDs = cases.map(\.id)
     static let allCaseIDSet = Set(allCaseIDs)
+    /// Default GUI round: hardware encode/decode cases only. Software comparisons remain opt-in.
+    static let hardwareCaseIDs = Set(cases.filter { $0.mode == "强制硬件" }.map(\.id))
+    /// Schema-version-1 reports without an explicit plan came from the original nine-case matrix.
+    static let legacyCaseIDs = Array(allCaseIDs.prefix(9))
+
+    /// Returns the approved forced-hardware case paired with a software comparison case.
+    /// Group and item must match, so an encode comparison can never be paired with a decode case.
+    static func hardwareComparisonCaseID(forSoftwareCaseID id: String) -> String? {
+        guard let softwareCase = cases.first(where: {
+            $0.id == id && ($0.mode == "软件编码" || $0.mode == "软件解码")
+        }) else { return nil }
+        return cases.first(where: {
+            $0.group == softwareCase.group && $0.item == softwareCase.item
+                && $0.mode == "强制硬件" && hardwareCaseIDs.contains($0.id)
+        })?.id
+    }
 
     static func id(group: String, item: String, mode: String) -> String {
         [group, item, mode].joined(separator: "|")

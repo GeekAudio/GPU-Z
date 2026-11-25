@@ -16,7 +16,6 @@ private final class FrameSink {
     var duplicateOutputs = 0
     var bytes = 0
     var samples: [CMSampleBuffer] = []
-    var format: CMFormatDescription?
     var expectedWidth = 0
     var expectedHeight = 0
 
@@ -33,13 +32,12 @@ private final class FrameSink {
         guard !flags.contains(.frameDropped) else { return }
         guard let sb = sample, CMSampleBufferIsValid(sb), CMSampleBufferDataIsReady(sb),
               CMSampleBufferGetTotalSampleSize(sb) > 0,
-              let description = CMSampleBufferGetFormatDescription(sb) else {
+              CMSampleBufferGetFormatDescription(sb) != nil else {
             invalidOutputs += 1
             return
         }
         guard completed.insert(index).inserted else { duplicateOutputs += 1; return }
         bytes += CMSampleBufferGetTotalSampleSize(sb)
-        format = description
         samples.append(sb)
     }
 
@@ -69,7 +67,6 @@ private final class FrameSink {
         duplicateOutputs = 0
         bytes = 0
         samples.removeAll(keepingCapacity: true)
-        format = nil
     }
 }
 
@@ -88,7 +85,7 @@ enum CodecBench {
     private static let inputBufferCount = 8
 
     /// 方法公开给 UI 与导出报告；属于合成负载自检，不是画质或标准认证测试。
-    static let measurementDescription = "VideoToolbox 合成吞吐自检：NV12 8-bit，预生成 8 个完整且不可变的图案帧循环输入；1080p 120 帧、4K 48 帧，30 fps 时间戳，目标码率 8/30 Mbps。每次会话先预热 8 帧并排空，正式编码从强制关键帧开始；编码与解码均测 3 次，报告 FPS 中位数所在的完整一轮。使用单调时钟，计时含提交、回调及排空，不含会话创建和像素生成。核心参数设置失败时不纳入比较；仅所有提交帧均有有效输出、无丢帧及错误才通过。软硬件优先读取 VT 会话属性；软件会话若未报告属性，依据官方禁用硬件规格与属性缺省语义标明软件路径及证据来源；强制硬编优先注册的 NullMoth 编码器，否则标明系统硬编；解码通过标准 GPU Registry ID 或 NVEncVT 会话回传的 PCI 设备 ID 核对 NVIDIA；两者同时返回时必须指向同一设备，缺少可验证身份时保留归属未知，不能仅凭系统硬解或加载了 NVDEC 库认定 NVIDIA。取消会等待当前驱动调用返回并安全排空，未开始项标为未测试。各编码器压缩策略和画质可能不同，FPS 不是等画质比较，也不是 Apple/NVIDIA 官方认证分数。"
+    static let measurementDescription = "VideoToolbox 合成吞吐自检。编码使用循环的 8 个 NV12 8-bit 图案帧，1080p 测 120 帧、4K 测 48 帧，30 fps 时间戳，目标码率 8/30 Mbps。H.264 和 HEVC 解码使用各自随 App 提供的固定码流，1080p 为 120 帧，4K 为 48 帧，报告记录素材 ID 和 SHA-256。每次会话预热 8 帧并排空，正式编码从强制关键帧开始。各项测 3 次，取 FPS 中位数所在的完整一轮。计时含提交、回调和排空，不含创建会话、读入素材和生成像素。要求有效完整输出且无错误、重复帧或丢帧。编码器、画质相关属性与 GPU 以实际会话证据为准，未报告时保留未知。FPS 反映这组负载，画质可能因编码实现而异。"
 
     static func codecName(_ t: CMVideoCodecType) -> String {
         switch t {
@@ -352,7 +349,9 @@ enum CodecBench {
             gpuName: result.gpuName, gpuRegistryID: result.gpuRegistryID, gpuVendorID: result.gpuVendorID,
             attribution: result.attribution, isNVIDIAConfirmed: result.isNVIDIAConfirmed,
             hardwareEvidence: result.hardwareEvidence, gpuEvidence: result.gpuEvidence,
-            nvidiaEvidence: result.nvidiaEvidence, warningText: result.warningText, statistics: stats,
+            nvidiaEvidence: result.nvidiaEvidence, warningText: result.warningText,
+            encoderQualityEvidence: result.encoderQualityEvidence,
+            decodeFixtureEvidence: result.decodeFixtureEvidence, statistics: stats,
             failureStage: result.failureStage, failureOSStatus: result.failureOSStatus)
     }
 
@@ -418,7 +417,6 @@ enum CodecBench {
         out.samples = sink.samples.sorted {
             CMTimeCompare(CMSampleBufferGetPresentationTimeStamp($0), CMSampleBufferGetPresentationTimeStamp($1)) < 0
         }
-        out.format = sink.format
         out.bytesPerFrame = sink.bytes / max(out.frames, 1)
         var issues: [String] = []
         if let first = sink.errors.first {
@@ -447,6 +445,7 @@ enum CodecBench {
 
     private static func encodeOnce(codec: CMVideoCodecType, width: Int, height: Int,
                                    frames: Int, mode: EncodeMode, bitrate: Int,
+                                   preferRegisteredEncoder: Bool = true,
                                    cancellation: BenchCancellation?,
                                    progress: ((Double, String) -> Void)?) -> BenchOutcome {
         var out = BenchOutcome()
@@ -461,7 +460,7 @@ enum CodecBench {
         switch mode {
         case .forcedHW:
             spec[kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder as String] = true
-            if let id = preferredNVIDIAEncoder(codec: codec) {
+            if preferRegisteredEncoder, let id = preferredNVIDIAEncoder(codec: codec) {
                 spec[kVTVideoEncoderSpecification_EncoderID as String] = id
             }
         case .auto:
@@ -600,6 +599,7 @@ enum CodecBench {
         }
         out.warningText = warnings.joined(separator: "；")
         collect(sink, into: &out)
+        out.encoderQualityEvidence = captureEncoderQuality(ses, samples: out.samples)
         if let first = out.samples.first,
            let attachments = CMSampleBufferGetSampleAttachmentsArray(first, createIfNecessary: false) as? [[String: Any]],
            (attachments.first?[kCMSampleAttachmentKey_NotSync as String] as? Bool) == true {
@@ -835,7 +835,6 @@ enum CodecBench {
     }
 
     /// Runs only the selected visible cases, in the same stable order as the nine-card grid.
-    /// Decode input preparation may encode a private source clip but never emits an extra result row.
     static func run(caseIDs requestedIDs: Set<String>,
                     progress: @escaping (Double, String) -> Void,
                     onRow: ((BenchRow) -> Void)? = nil,
@@ -850,9 +849,14 @@ enum CodecBench {
             EncCase(codec: hevc, w: 1920, h: 1080, frames: 120, bitrate: 8_000_000, mode: .software),
             EncCase(codec: hevc, w: 3840, h: 2160, frames: 48, bitrate: 30_000_000, mode: .forcedHW),
         ]
-        let decodeCases: [(CMVideoCodecType, DecodeMode)] = [(h264, .forcedHW), (h264, .software), (hevc, .forcedHW)]
+        let decodeCases: [(codec: CMVideoCodecType, width: Int, mode: DecodeMode)] = [
+            (h264, 1920, .forcedHW),
+            (h264, 1920, .software),
+            (hevc, 1920, .forcedHW),
+            (h264, 3840, .forcedHW),
+            (hevc, 3840, .forcedHW),
+        ]
         let total = Double(selectedIDs.count)
-        var sources: [CMVideoCodecType: BenchOutcome] = [:]
         func pendingAfterCancellation() -> BenchOutcome {
             var result = BenchOutcome()
             result.status = .notTested
@@ -872,59 +876,71 @@ enum CodecBench {
                         mode: c.mode, bitrate: c.bitrate, cancellation: cancellation,
                         progress: { fraction, phase in progress((base + fraction) / total, label + " · " + phase) })
                 }
-                if result.ok && c.w == 1920 && sources[c.codec] == nil { sources[c.codec] = result }
                 let row = makeRow(group: "编码", item: c.label, mode: c.mode.rawValue, result: result)
                 rows.append(row); onRow?(row)
                 continue
             }
 
-            guard let (codec, mode) = decodeCases.first(where: { codec, mode in
-                CodecTestPlan.id(group: "解码", item: "\(codecName(codec)) 1080p", mode: mode.rawValue) == caseID
+            guard let (codec, width, mode) = decodeCases.first(where: { codec, width, mode in
+                CodecTestPlan.id(group: "解码", item: decodeName(codec, width: width), mode: mode.rawValue) == caseID
             }) else {
                 throw CodecTestPlan.SelectionError.unknown(caseID)
             }
-            let label = "解码 \(codecName(codec)) 1080p · \(mode.rawValue)"
+            let item = decodeName(codec, width: width)
+            let label = "解码 \(item) · \(mode.rawValue)"
             let base = Double(rows.count)
             progress(base / total, label)
-            var result = BenchOutcome()
+            let result: BenchOutcome
             if cancellation?.isCancelled == true {
                 result = pendingAfterCancellation()
             } else {
-                var preparationFraction = 0.0
-                // 未选择编码项时用软件准备输入，不隐式触发一次未勾选的硬件编码。
-                if sources[codec] == nil {
-                    preparationFraction = 0.25
-                    sources[codec] = encode(codec: codec, width: 1920, height: 1080, frames: 120,
-                        mode: .software, bitrate: 8_000_000, repeats: 1, cancellation: cancellation,
-                        progress: { fraction, phase in
-                            progress((base + fraction * preparationFraction) / total,
-                                     label + " · 软件准备解码素材 · " + phase)
-                        })
-                }
-                if cancellation?.isCancelled == true {
-                    result.status = .cancelled
-                    result.errorText = "已取消生成解码素材，已提交的帧已安全排空"
-                } else if let source = sources[codec], source.ok,
-                          let format = source.format, !source.samples.isEmpty {
-                    result = decode(samples: source.samples, format: format, mode: mode,
-                        cancellation: cancellation, progress: { fraction, phase in
-                            progress((base + preparationFraction + fraction * (1 - preparationFraction)) / total,
-                                     label + " · " + phase)
-                        })
-                } else {
-                    result.status = .notTested
-                    result.errorText = "未测试：无法生成有效解码素材（并不表示此解码器不可用）；" + (sources[codec]?.errorText ?? "没有有效输入")
-                }
+                result = decodeFixture(codec: codec, width: width, mode: mode, cancellation: cancellation,
+                    progress: { fraction, phase in progress((base + fraction) / total, label + " · " + phase) })
             }
-            let row = makeRow(group: "解码", item: "\(codecName(codec)) 1080p", mode: mode.rawValue, result: result)
+            let row = makeRow(group: "解码", item: item, mode: mode.rawValue, result: result)
             rows.append(row); onRow?(row)
         }
         progress(1, cancellation?.isCancelled == true ? "已取消，已安全结束" : "完成")
         return rows
     }
 
+    private static func decodeName(_ codec: CMVideoCodecType, width: Int) -> String {
+        codecName(codec) + (width == 3840 ? " 4K" : " 1080p")
+    }
+
+    private static func decodeFixture(codec: CMVideoCodecType, width: Int = 1920,
+                                      mode: DecodeMode, repeats: Int = 3,
+                                      cancellation: BenchCancellation?,
+                                      progress: ((Double, String) -> Void)? = nil) -> BenchOutcome {
+        progress?(0, "载入并校验固定码流")
+        do {
+            let fixture = try FixedDecodeFixture.load(codec: codec, width: width)
+            var result = decode(samples: fixture.samples, format: fixture.format, mode: mode,
+                                repeats: repeats, cancellation: cancellation, progress: progress)
+            result.decodeFixtureEvidence = DecodeFixtureEvidence(identifier: fixture.id, sha256: fixture.sha256)
+            return result
+        } catch {
+            var result = BenchOutcome()
+            result.status = .notTested
+            result.failureStage = "校验固定码流"
+            result.errorText = error.localizedDescription
+            return result
+        }
+    }
+
+    // Each caller runs exactly one case in a new process. No Metal initialization or
+    // encoder enumeration can precede the first VT session creation in this path.
+    static func coldCheck(encoding: Bool, codec: CMVideoCodecType) -> BenchRow {
+        let result = encoding
+            ? encodeOnce(codec: codec, width: 1920, height: 1080, frames: 8, mode: .forcedHW,
+                         bitrate: 8_000_000, preferRegisteredEncoder: false, cancellation: nil, progress: nil)
+            : decodeFixture(codec: codec, mode: .forcedHW, repeats: 1, cancellation: nil)
+        return makeRow(group: encoding ? "编码" : "解码", item: codecName(codec) + " 1080p",
+                       mode: EncodeMode.forcedHW.rawValue, result: result)
+    }
+
     static let encodeCaseCount = 6
-    static let decodeCaseCount = 3
+    static let decodeCaseCount = 5
 
     private static func engineLabel(id: String, hardware: Bool?) -> String {
         let identity = id.isEmpty ? "编码器 ID 未报告" : id
@@ -940,5 +956,72 @@ enum CodecBench {
         if id.hasPrefix("com.nvmtl.videoencoder") { return "NullMoth 编码器" }
         if id.hasPrefix("com.apple") { return "Apple 编码器" }
         return id
+    }
+
+    static func captureEncoderQuality(_ session: VTCompressionSession,
+                                     samples: [CMSampleBuffer]) -> EncoderQualityEvidence {
+        var properties: [(String, CFString)] = [
+            ("ProfileLevel", kVTCompressionPropertyKey_ProfileLevel),
+            ("Quality", kVTCompressionPropertyKey_Quality),
+            ("PrioritizeEncodingSpeedOverQuality", kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality),
+            ("RealTime", kVTCompressionPropertyKey_RealTime),
+            ("AllowFrameReordering", kVTCompressionPropertyKey_AllowFrameReordering),
+            ("ExpectedFrameRate", kVTCompressionPropertyKey_ExpectedFrameRate),
+            ("AverageBitRate", kVTCompressionPropertyKey_AverageBitRate),
+            ("DataRateLimits", kVTCompressionPropertyKey_DataRateLimits),
+            ("MaxKeyFrameInterval", kVTCompressionPropertyKey_MaxKeyFrameInterval),
+        ]
+        if #available(macOS 13, *) {
+            properties.append(("ConstantBitRate", kVTCompressionPropertyKey_ConstantBitRate))
+        }
+        let observations = properties.map { name, key in
+            let reading = property(session, key)
+            return VTSessionPropertyEvidence(name: name, status: reading.status,
+                                             value: reading.status == noErr ? propertyValue(reading.value) : nil)
+        }
+        return EncoderQualityEvidence(reportedPreset: nil, sessionProperties: observations,
+                                      outputBitrateBps: measuredOutputBitrate(samples))
+    }
+
+    private static func propertyValue(_ value: CFTypeRef?) -> String? {
+        guard let value else { return nil }
+        if CFGetTypeID(value) == CFBooleanGetTypeID() {
+            return CFBooleanGetValue((value as! CFBoolean)) ? "true" : "false"
+        }
+        if CFGetTypeID(value) == CFStringGetTypeID() {
+            return value as? String
+        }
+        if CFGetTypeID(value) == CFNumberGetTypeID(), let number = value as? NSNumber {
+            return number.stringValue
+        }
+        return String(describing: value)
+    }
+
+    private static func measuredOutputBitrate(_ samples: [CMSampleBuffer]) -> Int64? {
+        guard !samples.isEmpty else { return nil }
+        var totalBytes: Int64 = 0
+        var earliest = Double.infinity
+        var latest = -Double.infinity
+        for sample in samples {
+            let size = CMSampleBufferGetTotalSampleSize(sample)
+            guard size > 0 else { return nil }
+            let addition = totalBytes.addingReportingOverflow(Int64(size))
+            guard !addition.overflow else { return nil }
+            totalBytes = addition.partialValue
+
+            let timestamp = CMSampleBufferGetPresentationTimeStamp(sample)
+            let frameDuration = CMSampleBufferGetDuration(sample)
+            guard CMTIME_IS_NUMERIC(timestamp), CMTIME_IS_NUMERIC(frameDuration) else { return nil }
+            let startSeconds = CMTimeGetSeconds(timestamp)
+            let endSeconds = CMTimeGetSeconds(CMTimeAdd(timestamp, frameDuration))
+            guard startSeconds.isFinite, endSeconds.isFinite, endSeconds > startSeconds else { return nil }
+            earliest = min(earliest, startSeconds)
+            latest = max(latest, endSeconds)
+        }
+        let duration = latest - earliest
+        let bitsPerSecond = Double(totalBytes) * 8 / duration
+        guard duration.isFinite, duration > 0, bitsPerSecond.isFinite,
+              bitsPerSecond > 0, bitsPerSecond < Double(Int64.max) else { return nil }
+        return Int64(bitsPerSecond.rounded())
     }
 }

@@ -13,6 +13,7 @@ SESSION_CORE_SOURCES=(
   "$SESSION_PROJECT_DIRECTORY/Sources/NullMothContract.swift"
   "$SESSION_PROJECT_DIRECTORY/Sources/EnvProbe.swift"
   "$SESSION_PROJECT_DIRECTORY/Sources/CodecTestPlan.swift"
+  "$SESSION_PROJECT_DIRECTORY/Sources/FixedDecodeFixture.swift"
   "$SESSION_PROJECT_DIRECTORY/Sources/CodecBench.swift"
 )
 SESSION_FRAMEWORKS=(-framework Foundation -framework CoreMedia -framework Metal -framework VideoToolbox -framework CoreVideo -framework IOKit)

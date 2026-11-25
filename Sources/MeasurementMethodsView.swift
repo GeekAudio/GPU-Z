@@ -6,7 +6,7 @@ struct MeasurementMethodsView: View {
             introduction
             MethodSection(title: "一次测试怎么跑") {
                 VStack(alignment: .leading, spacing: 12) {
-                    MethodStep(number: "01", title: "准备输入", description: "使用 NV12 8-bit 合成图案，循环输入 8 个预生成帧。1080p 测 120 帧，4K 测 48 帧。")
+                    MethodStep(number: "01", title: "准备输入", description: "编码循环使用 8 个预生成的 NV12 8-bit 图案帧。解码按照格式与分辨率读取固定码流，1080p 为 120 帧，4K 为 48 帧，报告记录素材 ID 和 SHA-256。")
                     Hairline()
                     MethodStep(number: "02", title: "先预热，再计时", description: "每个会话先预热 8 帧并排空；正式编码从强制关键帧开始。单调时钟覆盖提交、回调和排空，不含会话创建与像素生成。")
                     Hairline()
@@ -28,7 +28,7 @@ struct MeasurementMethodsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Label("FPS 仅代表本次合成负载", systemImage: "info.circle")
                         .font(DesignTokens.Font.body.weight(.medium))
-                    Text("软硬件编码未对齐输出画质，速度倍数不等于等画质性能。不同设备、输入或参数的历史成绩也不能直接换算为性能变化。")
+                    Text("编码详情会显示实际 EncoderID、可读取的画质属性和输出码率。比较编码速度时需匹配实际路径和画质。解码历史记录需核对素材 ID 和 SHA-256。")
                         .foregroundColor(DesignTokens.Text.secondary)
                     Text("结果不代表所有视频、芯片峰值吞吐或长期稳定性，也不是 Apple / NVIDIA 官方认证分数。核心参数设置失败的结果不纳入比较。")
                         .foregroundColor(DesignTokens.Text.secondary)

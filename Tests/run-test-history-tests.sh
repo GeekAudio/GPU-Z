@@ -11,6 +11,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos11.0" \
   "$HISTORY_PROJECT_DIRECTORY/Sources/CodecTestPlan.swift" \
   "$HISTORY_PROJECT_DIRECTORY/Sources/NullMothContract.swift" \
   "$HISTORY_PROJECT_DIRECTORY/Sources/EnvProbe.swift" \
+  "$HISTORY_PROJECT_DIRECTORY/Sources/FixedDecodeFixture.swift" \
   "$HISTORY_PROJECT_DIRECTORY/Sources/CodecBench.swift" \
   "$HISTORY_PROJECT_DIRECTORY/Sources/DiagnosticLog.swift" \
   "$HISTORY_PROJECT_DIRECTORY/Sources/CodecWorker.swift" \

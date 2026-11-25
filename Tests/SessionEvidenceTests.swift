@@ -12,6 +12,19 @@ struct SessionEvidenceTests {
             if !condition { failures.append(name) }
         }
 
+        let decodePlan = CodecTestPlan.cases.filter { $0.group == "解码" }
+        let expectedDecodeIDs = [
+            CodecTestPlan.id(group: "解码", item: "H.264 1080p", mode: "强制硬件"),
+            CodecTestPlan.id(group: "解码", item: "H.264 1080p", mode: "软件解码"),
+            CodecTestPlan.id(group: "解码", item: "HEVC 1080p", mode: "强制硬件"),
+            CodecTestPlan.id(group: "解码", item: "H.264 4K", mode: "强制硬件"),
+            CodecTestPlan.id(group: "解码", item: "HEVC 4K", mode: "强制硬件"),
+        ]
+        check(decodePlan.map(\.id) == expectedDecodeIDs,
+              "decode session evidence plan includes the original three rows and appended H.264/HEVC 4K hardware cases")
+        check(CodecTestPlan.legacyCaseIDs == Array(CodecTestPlan.allCaseIDs.prefix(9)),
+              "the session evidence model keeps the original nine-case report boundary")
+
         #if MODEL_COUNT_ONLY
         let nativeAVC = "com.nvmtl.videoencoder.avc.nvenc"
         let nativeHEVC = "com.nvmtl.videoencoder.hevc.nvenc"

@@ -49,7 +49,7 @@ final class TestModel: ObservableObject {
     @Published var hevcDec = false
     @Published var declaredDecoderCapabilities: EnvProbe.DecCaps?
     @Published var results: [BenchRow] = []
-    @Published private(set) var selectedCaseIDs = Set(CodecTestPlan.allCaseIDs)
+    @Published private(set) var selectedCaseIDs = CodecTestPlan.hardwareCaseIDs
     /// 本轮执行范围独立于下一轮勾选；旧报告缺少计划时仍按完整矩阵解释。
     @Published var plannedCaseIDs: [String]?
     @Published var running = false
@@ -140,7 +140,7 @@ final class TestModel: ObservableObject {
     var displayedCaseIDs: Set<String> {
         if let plannedCaseIDs { return Set(plannedCaseIDs) }
         if running || finished || wasCancelled || !results.isEmpty {
-            return Set(CodecTestPlan.allCaseIDs)
+            return Set(CodecTestPlan.legacyCaseIDs)
         }
         return selectedCaseIDs
     }
@@ -168,6 +168,13 @@ final class TestModel: ObservableObject {
     func start() { start(caseIDs: selectedCaseIDs) }
 
     func startSingle(_ id: String) { start(caseIDs: [id]) }
+
+    /// Runs a software comparison beside its matching hardware case without changing
+    /// the hardware-only selection that will be used for the next regular round.
+    func startSoftwareComparison(caseID: String) {
+        guard let hardwareCaseID = CodecTestPlan.hardwareComparisonCaseID(forSoftwareCaseID: caseID) else { return }
+        start(caseIDs: [hardwareCaseID, caseID])
+    }
 
     private func start(caseIDs: Set<String>) {
         guard canRun, let plan = try? CodecTestPlan.validate(Array(caseIDs)),

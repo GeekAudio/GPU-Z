@@ -9,13 +9,19 @@ import Foundation
   }
 
   let ids=CodecTestPlan.allCaseIDs
-  check(ids.count==9 && Set(ids).count==9,"canonical plan has nine unique test identities")
+  check(ids.count==11 && Set(ids).count==11,"canonical plan has eleven unique test identities")
+  check(CodecTestPlan.legacyCaseIDs.count==9 && Array(ids.prefix(9))==CodecTestPlan.legacyCaseIDs,
+        "the original nine case IDs remain stable and ordered")
+  check(Array(ids.suffix(2))==[
+    CodecTestPlan.id(group:"解码",item:"H.264 4K",mode:"强制硬件"),
+    CodecTestPlan.id(group:"解码",item:"HEVC 4K",mode:"强制硬件")
+  ],"4K hardware decode cases append after the original matrix")
   check(try CodecTestPlan.validate(nil)==ids,"no selection preserves the full matrix")
   let shuffled=[ids[8],ids[2],ids[6]]
   check(try CodecTestPlan.validate(shuffled)==[ids[2],ids[6],ids[8]],"subset is normalized to grid order")
   check(try CodecTestPlan.arguments(for:Set(shuffled))==["--case-id",ids[2],"--case-id",ids[6],"--case-id",ids[8]],"selection args are canonical and repeatable")
   check(try CodecTestPlan.selection(in:["--codec-worker"]+CodecTestPlan.arguments(for:Set(shuffled)))==[ids[2],ids[6],ids[8]],"worker receives selected IDs")
-  check(try CodecTestPlan.selection(in:["--codec-worker"])==ids,"legacy worker arguments default to all nine")
+  check(try CodecTestPlan.selection(in:["--codec-worker"])==ids,"worker arguments without selection default to all eleven current cases")
   rejects({ _ = try CodecTestPlan.validate([]) },"empty selection must fail")
   rejects({ _ = try CodecTestPlan.validate([ids[0],ids[0]]) },"duplicate IDs must fail")
   rejects({ _ = try CodecTestPlan.validate(["unknown|case|id"]) },"unknown IDs must fail")
@@ -53,7 +59,7 @@ import Foundation
   let normal=try script("normal",fragmented+"printf '%s\\n' 'driver diagnostic fixture' >&2\n"+rowLines+complete)
   var received:[BenchRow]=[],diagnostics:[String]=[]
   let result=client(normal).run(onEvent:{if let row=$0.row {received.append(row)}},onDiagnostic:{diagnostics.append($0)})
-  check(result.complete && !result.cancelled,"fragmented environment and nine canonical rows complete")
+  check(result.complete && !result.cancelled,"fragmented environment and eleven canonical rows complete")
   check(received.map(\.id)==ids,"full worker preserves canonical row order")
   check(diagnostics.contains("driver diagnostic fixture"),"driver stderr drains before completion")
 

@@ -116,15 +116,20 @@ struct TestSelectionModelTests {
         let firstID = cases[0].id
         let secondID = cases[1].id
         let thirdID = cases[2].id
-        let lastID = cases[8].id
+        let lastID = cases[10].id
         let factory = FixtureWorkers(directory: directory,
-            scenarios: [.complete, .complete, .firstResultThenWaitForCancellation, .complete])
+            scenarios: [.complete, .complete, .complete, .firstResultThenWaitForCancellation, .complete])
         let model = makeTestModel(factory)
 
-        check(model.selectedCaseIDs == allIDs && model.totalCases == 9,
-              "a new model defaults to all nine cases")
+        let hardwareIDs = CodecTestPlan.hardwareCaseIDs
+        check(hardwareIDs.count == 8 && model.selectedCaseIDs == hardwareIDs && model.totalCases == 8,
+              "a new model defaults to the eight hardware cases")
+        check(CodecTestPlan.hardwareComparisonCaseID(forSoftwareCaseID: cases[1].id) == firstID
+              && CodecTestPlan.hardwareComparisonCaseID(forSoftwareCaseID: cases[7].id) == cases[6].id
+              && CodecTestPlan.hardwareComparisonCaseID(forSoftwareCaseID: firstID) == nil,
+              "only approved software cases pair with a same-codec, same-size, same-group hardware case")
         model.selectCases(allIDs)
-        check(model.selectedCaseIDs == allIDs, "select-all restores all nine cases")
+        check(model.selectedCaseIDs == allIDs, "select-all restores all eleven cases")
         model.selectCases([])
         check(model.selectedCaseIDs.isEmpty && !model.canStart,
               "clearing the selection disables a batch run")
@@ -136,11 +141,31 @@ struct TestSelectionModelTests {
         model.startSingle(secondID)
         check(model.running && model.plannedCaseIDs == [secondID] && model.totalCases == 1,
               "single-item action starts one case even when the batch selection is empty")
+        check(model.selectedCaseIDs.isEmpty,
+              "a software-only single-item run leaves next-round selection unchanged")
         check(model.results.isEmpty, "starting a new round clears the previous result rows")
         check(waitUntil { !model.running }, "single-item fixture worker exits")
         check(factory.plans.first == [secondID] && model.finished && model.completedCount == 1
               && model.totalCases == 1 && model.results.map(\.id) == [secondID],
               "single-item run passes only its canonical ID and reports 1/1 complete")
+
+        model.selectCases(hardwareIDs)
+        let nextRoundSelection = model.selectedCaseIDs
+        model.startSoftwareComparison(caseID: secondID)
+        let comparisonPlan = [firstID, secondID]
+        check(model.running && model.plannedCaseIDs == comparisonPlan && model.totalCases == 2,
+              "software comparison starts its matching hardware case and software case together")
+        check(model.selectedCaseIDs == nextRoundSelection,
+              "software comparison leaves the next hardware round selection unchanged")
+        check(waitUntil { !model.running }, "software comparison fixture worker exits")
+        check(factory.plans.count == 2 && factory.plans[1] == comparisonPlan
+              && model.finished && model.completedCount == 2 && model.results.map(\.id) == comparisonPlan,
+              "comparison worker and report use the canonical paired case IDs")
+
+        let plansBeforeInvalidComparison = factory.plans.count
+        model.startSoftwareComparison(caseID: firstID)
+        check(factory.plans.count == plansBeforeInvalidComparison && !model.running,
+              "a hardware case cannot be launched through the software comparison route")
 
         // Set-based selections are sent in canonical grid order, independent of click order.
         model.selectCases([thirdID, firstID])
@@ -149,7 +174,7 @@ struct TestSelectionModelTests {
               "a new subset round clears old rows and counts only its selected cases")
         check(waitUntil { !model.running }, "subset fixture worker exits")
         let subset = Array(CodecTestPlan.allCaseIDs.prefix(3)).filter { $0 == firstID || $0 == thirdID }
-        check(factory.plans.count == 2 && factory.plans[1] == subset
+        check(factory.plans.count == 3 && factory.plans[2] == subset
               && model.plannedCaseIDs == subset && model.completedCount == 2 && model.totalCases == 2,
               "subset IDs are canonicalized and denominator is limited to the two selected cases")
 
@@ -178,7 +203,7 @@ struct TestSelectionModelTests {
         model.start()
         check(model.running && model.results.isEmpty && model.plannedCaseIDs == [lastID]
               && model.totalCases == 1 && model.completedCount == 0,
-              "the next run adopts its new one-item plan and clears prior partial results")
+              "the next run adopts its new one-item 4K decode plan and clears prior partial results")
         check(waitUntil { !model.running }, "next-run fixture worker exits")
         check(factory.plans.last == [lastID] && model.finished && model.completedCount == 1
               && model.totalCases == 1,
@@ -188,8 +213,8 @@ struct TestSelectionModelTests {
         legacyModel.plannedCaseIDs = nil
         legacyModel.results = [BenchRow(group: cases[0].group, item: cases[0].item, mode: cases[0].mode,
             ok: true, fps: 120, engine: "legacy fixture", detail: "synthetic", status: .passed)]
-        check(legacyModel.totalCases == 9 && legacyModel.completedCount == 1,
-              "a legacy report without explicit plan retains its nine-case denominator")
+        check(legacyModel.totalCases == CodecTestPlan.legacyCaseIDs.count && legacyModel.completedCount == 1,
+              "a legacy report without explicit plan retains its original nine-case denominator")
 
         let failedBeforeFirstRow = makeTestModel(factory)
         failedBeforeFirstRow.plannedCaseIDs = [firstID, thirdID]

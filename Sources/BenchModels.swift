@@ -48,6 +48,63 @@ struct BenchStatistics: Codable {
     var bytesPerFrame = 0
 }
 
+struct VTSessionPropertyEvidence: Codable, Equatable {
+    let name: String
+    let status: Int32
+    let value: String?
+
+    var reportValue: String {
+        guard status == 0 else { return "查询失败 OSStatus=\(status)" }
+        return value ?? "未提供"
+    }
+}
+
+enum EncoderPresetEvidenceStatus: String, Codable {
+    case reported
+    case notReportedByVideoToolbox
+}
+
+struct EncoderQualityEvidence: Codable, Equatable {
+    /// VideoToolbox does not return a universal P-level preset for these encoders.
+    /// Leave nil unless the encoder itself reports one.
+    var reportedPreset: String?
+    var presetStatus: EncoderPresetEvidenceStatus
+    var sessionProperties: [VTSessionPropertyEvidence]
+    /// Calculated from encoded sample sizes and presentation duration, not the target bitrate.
+    var outputBitrateBps: Int64?
+
+    init(reportedPreset: String?, sessionProperties: [VTSessionPropertyEvidence],
+         outputBitrateBps: Int64?) {
+        self.reportedPreset = reportedPreset
+        self.presetStatus = reportedPreset == nil ? .notReportedByVideoToolbox : .reported
+        self.sessionProperties = sessionProperties
+        self.outputBitrateBps = outputBitrateBps
+    }
+
+    var reportedPresetLabel: String {
+        reportedPreset ?? "未报告"
+    }
+
+    var reportLines: [String] {
+        var lines = ["可核实画质档 · \(reportedPresetLabel)"]
+        if presetStatus == .notReportedByVideoToolbox {
+            lines.append("画质档状态 · VideoToolbox 未提供通用 P 档位，无法核实具体 P 档")
+        }
+        if let outputBitrateBps {
+            lines.append("实际输出码率 · \(outputBitrateBps) bit/s（由样本大小和时长计算）")
+        } else {
+            lines.append("实际输出码率 · 未取得")
+        }
+        lines += sessionProperties.map { "\($0.name) · \($0.reportValue)" }
+        return lines
+    }
+}
+
+struct DecodeFixtureEvidence: Codable, Equatable {
+    let identifier: String
+    let sha256: String
+}
+
 /// 取消是协作式的：只在 VT 调用之间检查，已提交的帧始终安全排空。
 final class BenchCancellation {
     private let lock = NSLock()
@@ -80,6 +137,8 @@ struct BenchOutcome {
     var fpsMax: Double = 0
     var hardwareAccelerated: Bool? = nil
     var encoderID = ""
+    var encoderQualityEvidence: EncoderQualityEvidence?
+    var decodeFixtureEvidence: DecodeFixtureEvidence?
     var gpuName = ""
     var gpuRegistryID: UInt64? = nil
     var gpuVendorID: UInt32? = nil
@@ -95,7 +154,6 @@ struct BenchOutcome {
     var usedEngine = ""
     var bytesPerFrame = 0
     var samples: [CMSampleBuffer] = []
-    var format: CMFormatDescription?
 
     mutating func recordIssue(_ message: String) {
         errorText = errorText.isEmpty ? message : errorText + "；" + message
@@ -114,6 +172,8 @@ struct BenchRow: Identifiable, Codable {
     let status: BenchStatus
     let hardwareAccelerated: Bool?
     let encoderID: String
+    let encoderQualityEvidence: EncoderQualityEvidence?
+    let decodeFixtureEvidence: DecodeFixtureEvidence?
     let gpuName: String
     let gpuRegistryID: UInt64?
     let gpuVendorID: UInt32?
@@ -138,10 +198,15 @@ struct BenchRow: Identifiable, Codable {
         guard hasValidMeasurement, hardwareAccelerated == true,
               software.hasValidMeasurement, group == software.group, item == software.item,
               group == "编码" || group == "解码",
+              group != "解码" || decodeFixtureEvidence == software.decodeFixtureEvidence,
               software.mode == (group == "编码" ? "软件编码" : "软件解码"),
               software.attribution == .software || software.hardwareAccelerated == false else { return nil }
         let ratio = fps / software.fps
         return ratio.isFinite && ratio > 0 ? ratio : nil
+    }
+
+    func softwareRatio(in results: [BenchRow]) -> Double? {
+        results.lazy.compactMap { self.throughputRatio(comparedTo: $0) }.first
     }
 
     /// 保留原有参数；新增证据均有默认值，旧调用不会因此产生 NVIDIA 结论。
@@ -151,7 +216,10 @@ struct BenchRow: Identifiable, Codable {
          gpuRegistryID: UInt64? = nil, gpuVendorID: UInt32? = nil,
          attribution: BenchAttribution = .unknown, isNVIDIAConfirmed: Bool = false,
          hardwareEvidence: String = "", gpuEvidence: String = "", nvidiaEvidence: String = "",
-         warningText: String = "", statistics: BenchStatistics? = nil,
+         warningText: String = "",
+         encoderQualityEvidence: EncoderQualityEvidence? = nil,
+         decodeFixtureEvidence: DecodeFixtureEvidence? = nil,
+         statistics: BenchStatistics? = nil,
          failureStage: String? = nil, failureOSStatus: Int32? = nil) {
         self.group = group
         self.item = item
@@ -163,6 +231,8 @@ struct BenchRow: Identifiable, Codable {
         self.status = status ?? (ok ? .passed : .failed)
         self.hardwareAccelerated = hardwareAccelerated
         self.encoderID = encoderID
+        self.encoderQualityEvidence = encoderQualityEvidence
+        self.decodeFixtureEvidence = decodeFixtureEvidence
         self.gpuName = gpuName
         self.gpuRegistryID = gpuRegistryID
         self.gpuVendorID = gpuVendorID

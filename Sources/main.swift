@@ -6,6 +6,8 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow?
     var model: TestModel?
+    let coldStartup = ColdStartupIndicator()
+    var coldStartupRunning = false
     private var updater: AppUpdateCoordinator?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -21,7 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         win.toolbarStyle = .unified
         win.backgroundColor = .windowBackgroundColor
         win.appearance = nil
-        win.contentView = NSHostingView(rootView: MainView(model: m))
+        win.contentView = NSHostingView(rootView: MainView(model: m, coldStartup: coldStartup,
+            onColdStartupCheck: { [weak self] in self?.showColdStartupCheck(nil) }))
         win.setContentSize(NSSize(width: 860, height: 670))
         win.contentMinSize = NSSize(width: 840, height: 660)
         let autosaveName = "NVCodecTestOverviewNarrow-v141"
@@ -62,10 +65,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let model, model.running else { return .terminateNow }
-        model.cancel()
+        let testRunning = model?.running == true
+        guard testRunning || coldStartupRunning else { return .terminateNow }
+        if testRunning { model?.cancel() }
         Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
-            if !model.running { timer.invalidate(); sender.reply(toApplicationShouldTerminate: true) }
+            if self.model?.running != true && !self.coldStartupRunning {
+                timer.invalidate()
+                sender.reply(toApplicationShouldTerminate: true)
+            }
         }
         return .terminateLater
     }
@@ -79,6 +86,10 @@ if CommandLine.arguments.contains("--codec-worker") {
     exit(CodecWorker.run())
 }
 
+if CommandLine.arguments.contains("--cold-check-worker") {
+    exit(ColdStartupCheck.runWorker())
+}
+
 if CommandLine.arguments.contains("--gpu-z-install-helper") {
     AppUpdateInstallerHelper.run(arguments: CommandLine.arguments)
 }
@@ -87,9 +98,10 @@ if CommandLine.arguments.contains("--help") {
     print("""
     GPU-Z — 视频编解码诊断
       --diagnose                   仅采集驱动与环境证据
-      --selftest                   运行完整九项矩阵；Ctrl-C 请求安全取消
+      --selftest                   运行完整十一项矩阵；Ctrl-C 请求安全取消
       --output <path.txt|path.json> 保存报告（默认 /tmp/nvcodec-selftest.txt）
       --json-output <path.json>    同时保存结构化报告
+      --cold-check                 独立进程检测 H.264/HEVC 首次硬编硬解
       --snapshot <path.png>       离屏渲染界面
       --preview                   真实窗口预览已保存报告（验证原生控件，不导出图片）
       --with-results              截图前运行完整矩阵
@@ -105,6 +117,10 @@ if CommandLine.arguments.contains("--help") {
       --window-frame             截图包含原生标题栏（默认只截内容区）
     """)
     exit(0)
+}
+
+if CommandLine.arguments.contains("--cold-check") {
+    exit(ColdStartupCheck.runCommand())
 }
 
 if CommandLine.arguments.contains("--selftest") || CommandLine.arguments.contains("--diagnose") {
@@ -137,6 +153,9 @@ appSub.addItem(NSMenuItem(title: "关于 GPU-Z",
 let updateItem = NSMenuItem(title: "检查更新…", action: #selector(AppDelegate.checkForUpdates(_:)), keyEquivalent: "")
 updateItem.target = delegate
 appSub.addItem(updateItem)
+let coldStartupItem = NSMenuItem(title: "冷启动检测…", action: #selector(AppDelegate.showColdStartupCheck(_:)), keyEquivalent: "")
+coldStartupItem.target = delegate
+appSub.addItem(coldStartupItem)
 appSub.addItem(NSMenuItem.separator())
 appSub.addItem(NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 appItem.submenu = appSub

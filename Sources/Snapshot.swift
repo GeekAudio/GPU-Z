@@ -73,8 +73,10 @@ enum Snapshot {
                     if let environment = event.environment { measuredSnapshot = environment; model.applyEnvironment(environment) }
                     if let row = event.row { rows.append(row) }
                 }, onDiagnostic: { FileHandle.standardError.write(Data(($0 + "\n").utf8)) })
-                applyResults(rows, to: model, wasCancelled: completion.cancelled)
-                SelfTest.saveOutputs(snapshot: measuredSnapshot, results: rows, wasCancelled: completion.cancelled)
+                let plan = CodecTestPlan.allCaseIDs
+                applyResults(rows, to: model, wasCancelled: completion.cancelled, plannedCaseIDs: plan)
+                SelfTest.saveOutputs(snapshot: measuredSnapshot, results: rows, wasCancelled: completion.cancelled,
+                                     plannedCaseIDs: plan)
             }
         }
 
@@ -232,7 +234,7 @@ enum Snapshot {
                                      plannedCaseIDs: [String]? = nil) {
         model.results = rows
         model.plannedCaseIDs = plannedCaseIDs
-        let expected = Set(plannedCaseIDs ?? CodecTestPlan.allCaseIDs)
+        let expected = Set(plannedCaseIDs ?? CodecTestPlan.legacyCaseIDs)
         let scopedRows = rows.filter { expected.contains($0.id) }
         model.wasCancelled = wasCancelled || scopedRows.contains { $0.status == .cancelled }
         let completed = scopedRows.filter { $0.status != .notTested && $0.status != .cancelled }.count

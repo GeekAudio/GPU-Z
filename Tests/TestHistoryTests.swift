@@ -15,8 +15,11 @@ struct TestHistoryTests {
         let first = cases[0]
         let second = cases[1]
         let third = cases[2]
-        check(TestHistoryMatrix.cases.map(\.id) == CodecTestPlan.allCaseIDs && cases.count == 9,
-              "matrix columns use all nine canonical cases in grid order")
+        check(TestHistoryMatrix.cases.map(\.id) == CodecTestPlan.allCaseIDs && cases.count == 11,
+              "matrix columns use all eleven canonical cases in grid order")
+        check(CodecTestPlan.legacyCaseIDs.count == 9
+              && Array(cases.prefix(9)).map(\.id) == CodecTestPlan.legacyCaseIDs,
+              "the original nine history case identities remain stable")
         check(TestHistoryMatrix.rows(entries: []).isEmpty,
               "an empty local history produces no table rows")
 
@@ -30,10 +33,10 @@ struct TestHistoryTests {
         let fullReport = report(rows: [firstPassed, secondPassed, failed, cancelled, unverified, notTested], plan: nil)
         let fullEntry = TestHistoryEntry(id: "older", createdAt: now.addingTimeInterval(-60), report: fullReport)
         let fullMatrix = TestHistoryMatrix.rows(entries: [fullEntry])
-        check(fullMatrix.count == 1 && fullMatrix[0].cells.count == 9,
-              "a single saved history still displays one row with all nine columns")
+        check(fullMatrix.count == 1 && fullMatrix[0].cells.count == 11,
+              "a single saved history displays one row with all eleven columns")
         check(fullMatrix[0].cells.map(\.caseID) == CodecTestPlan.allCaseIDs,
-              "each history row keeps canonical nine-column order")
+              "each history row keeps canonical eleven-column order")
         check(fullMatrix[0].cells[0].value == "123.5 FPS"
               && fullMatrix[0].cells[1].value == "100.0 FPS",
               "successful finite FPS values are formatted to one decimal place")
@@ -42,8 +45,29 @@ struct TestHistoryTests {
               "failed, cancelled, unverified and untested values keep distinct labels")
         check(fullMatrix[0].cells[6].value == "未测" && fullMatrix[0].cells[8].value == "未测",
               "missing result rows in a legacy full-plan report display as untested")
+        check(fullMatrix[0].cells[9].value == "未选" && fullMatrix[0].cells[10].value == "未选",
+              "schema-version-1 reports without a plan treat added 4K cases as outside the historical plan")
         check(fullMatrix[0].passedSummary == "2/9",
-              "passed count includes only valid successful rows and uses the report scope")
+              "schema-version-1 reports without a plan retain their original nine-case denominator")
+
+        let historicalNineReport = report(rows: CodecTestPlan.legacyCaseIDs.compactMap { id in
+            guard let testCase = cases.first(where: { $0.id == id }) else { return nil }
+            return row(testCase, fps: 120)
+        }, plan: nil)
+        let historicalNine = TestHistoryMatrix.row(for: TestHistoryEntry(
+            id: "historical-nine", createdAt: now, report: historicalNineReport))
+        check(historicalNine.passedSummary == "9/9"
+              && historicalNine.cells.count == 11
+              && historicalNine.cells[9].value == "未选"
+              && historicalNine.cells[10].value == "未选",
+              "a prior complete nine-case history remains 9/9 when new 4K columns are added")
+        let currentFullPlan = report(rows: historicalNineReport.results, plan: CodecTestPlan.allCaseIDs)
+        let currentFullRow = TestHistoryMatrix.row(for: TestHistoryEntry(
+            id: "current-eleven", createdAt: now, report: currentFullPlan))
+        check(currentFullRow.passedSummary == "9/11"
+              && currentFullRow.cells[9].value == "未测"
+              && currentFullRow.cells[10].value == "未测",
+              "an explicit current eleven-case plan treats absent 4K results as untested")
         check(fullMatrix[0].cells[0].help.contains("session GPU Registry ID confirmed")
               && fullMatrix[0].cells[0].help.contains("编码"),
               "cell help preserves case identity and session evidence")
@@ -55,13 +79,22 @@ struct TestHistoryTests {
         let selectedCells = TestHistoryMatrix.rows(entries: [
             TestHistoryEntry(id: "selected", createdAt: now, report: selectedReport)
         ])[0].cells
-        check(selectedCells.count == 9 && selectedCells[0].value == "123.5 FPS"
+        check(selectedCells.count == 11 && selectedCells[0].value == "123.5 FPS"
               && selectedCells[1].value == "失败" && selectedCells[2].value == "未选",
-              "subset reports still occupy nine columns and mark out-of-plan cases unselected")
+              "subset reports still occupy eleven columns and mark out-of-plan cases unselected")
         let selectedRow = TestHistoryMatrix.rows(entries: [
             TestHistoryEntry(id: "selected", createdAt: now, report: selectedReport)
         ])[0]
         check(selectedRow.passedSummary == "1/2", "pass denominator follows the explicit run plan")
+
+        let h2644K = cases[9]
+        let h2644KReport = report(rows: [row(h2644K, fps: 72)], plan: [h2644K.id])
+        let h2644KMatrix = TestHistoryMatrix.row(for: TestHistoryEntry(
+            id: "selected-4k", createdAt: now, report: h2644KReport))
+        check(h2644KMatrix.cells[9].value == "72.0 FPS"
+              && h2644KMatrix.cells[0].value == "未选"
+              && h2644KMatrix.passedSummary == "1/1",
+              "an explicitly selected 4K decode case is stored in its own column with a one-case denominator")
 
         let missingPlanned = report(rows: [], plan: [first.id])
         check(TestHistoryMatrix.cell(report: missingPlanned, caseID: first.id).value == "未测",

@@ -117,7 +117,9 @@ enum TestHistoryMatrix {
     }
 
     private static func plannedIDs(_ report: CodecReport) -> Set<String> {
-        let requested = Set(report.plannedCaseIDs ?? CodecTestPlan.allCaseIDs)
+        // Schema-version-1 reports without a plan predate the two 4K decode cases.
+        // Keep their nine-case denominator and mark newly introduced columns unselected.
+        let requested = Set(report.plannedCaseIDs ?? CodecTestPlan.legacyCaseIDs)
         return requested.intersection(CodecTestPlan.allCaseIDSet)
     }
 

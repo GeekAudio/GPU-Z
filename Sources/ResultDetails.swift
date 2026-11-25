@@ -16,7 +16,13 @@ struct DetailField: View {
 
 struct ResultDetails: View {
     let row: BenchRow
+    let softwareRatio: Double?
     @Environment(\.presentationMode) private var presentationMode
+
+    init(row: BenchRow, softwareRatio: Double? = nil) {
+        self.row = row
+        self.softwareRatio = softwareRatio
+    }
 
     private var hasMeasurement: Bool { row.hasValidMeasurement }
     private var statusTitle: String {
@@ -72,6 +78,25 @@ struct ResultDetails: View {
          "硬件证据：\(row.hardwareEvidence)",
          "GPU 证据：\(row.gpuEvidence)", "NVIDIA 证据：\(row.nvidiaEvidence)",
          "提示：\(row.warningText)", "完整详情：\(row.detail)"]
+        if let softwareRatio, softwareRatio.isFinite, softwareRatio > 0 {
+            fields += ["相对软件吞吐：\(String(format: "%.2f×", softwareRatio))",
+                       row.group == "编码" ? "编码对照口径：只比较吞吐，不代表画质相同" : "解码对照口径：同一固定码流"]
+        }
+        if row.group == "编码" {
+            if let quality = row.encoderQualityEvidence {
+                fields += ["编码器实际 EncoderID：\(row.encoderID.isEmpty ? "未报告" : row.encoderID)"]
+                fields += quality.reportLines.map { "编码质量 · \($0)" }
+            } else {
+                fields.append("编码质量证据：此记录未保存")
+            }
+        }
+        if row.group == "解码" {
+            if let fixture = row.decodeFixtureEvidence {
+                fields += ["解码素材 ID：\(fixture.identifier)", "解码素材 SHA-256：\(fixture.sha256)"]
+            } else {
+                fields.append("解码素材校验：此记录未保存")
+            }
+        }
         if let stats = row.statistics {
             fields += ["有效帧：\(stats.frames)", "请求帧：\(stats.requestedFrames)",
                        "提交帧：\(stats.submittedFrames)", "丢帧：\(stats.droppedFrames)",
@@ -88,6 +113,9 @@ struct ResultDetails: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     measurementSummary
+                    if let softwareRatio, softwareRatio.isFinite, softwareRatio > 0 {
+                        softwareThroughputSummary(softwareRatio)
+                    }
                     if needsAttention {
                         ResultNotice(title: statusTitle, text: failureDescription,
                                      symbol: row.status == .failed ? "exclamationmark.circle" : "info.circle", color: statusColor)
@@ -98,6 +126,7 @@ struct ResultDetails: View {
                     }
                     executionPath
                     if let stats = row.statistics { statisticsSection(stats) }
+                    codecEvidenceSection
                     evidenceSection
                 }.padding(20)
             }
@@ -156,6 +185,25 @@ struct ResultDetails: View {
         return stats.measurementCount > 1 ? "\(stats.measurementCount) 次测量 · FPS 中位数" : "单次测量"
     }
 
+    private func softwareThroughputSummary(_ ratio: Double) -> some View {
+        HStack(alignment: .center, spacing: 20) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("相对软件吞吐").font(DesignTokens.Font.small).foregroundColor(DesignTokens.Text.secondary)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(String(format: "%.2f×", ratio))
+                        .font(DesignTokens.Font.title1.monospacedDigit())
+                    Text("硬件 / 软件").font(DesignTokens.Font.small).foregroundColor(DesignTokens.Text.secondary)
+                }
+            }
+            Spacer(minLength: 0)
+            Text(row.group == "编码"
+                 ? "两路编码使用各自的画质设置。"
+                 : "同一固定码流的吞吐对比。")
+                .font(DesignTokens.Font.small).foregroundColor(DesignTokens.Text.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }.modifier(PanelStyle())
+    }
+
     private var executionPath: some View {
         ResultSection(title: "运行路径") {
             VStack(alignment: .leading, spacing: 12) {
@@ -187,6 +235,50 @@ struct ResultDetails: View {
                     ResultMetric(title: "平均每帧", value: stats.bytesPerFrame > 0 ? "\(stats.bytesPerFrame) 字节" : "未记录")
                 }
             }.modifier(PanelStyle())
+        }
+    }
+
+    @ViewBuilder
+    private var codecEvidenceSection: some View {
+        if row.group == "编码" {
+            ResultSection(title: "编码器与画质证据", note: "读取自实际 VideoToolbox 会话") {
+                VStack(alignment: .leading, spacing: 12) {
+                    ResultValueRow(title: "会话 EncoderID", value: row.encoderID)
+                    if let quality = row.encoderQualityEvidence {
+                        ResultValueRow(title: "编码质量档", value: quality.reportedPresetLabel,
+                                       note: quality.presetStatus == .reported
+                                           ? "编码器明确报告的档位"
+                                           : "VideoToolbox 未提供通用 P 档位")
+                        if let bitrate = quality.outputBitrateBps {
+                            ResultValueRow(title: "实际输出码率", value: "\(bitrate) bit/s",
+                                           note: "从编码样本总大小和呈现时长计算")
+                        } else {
+                            ResultValueRow(title: "实际输出码率", value: "未取得")
+                        }
+                        Hairline()
+                        ForEach(quality.sessionProperties.indices, id: \.self) { index in
+                            let property = quality.sessionProperties[index]
+                            ResultValueRow(title: property.name == "ProfileLevel"
+                                           ? "ProfileLevel（会话回读）" : property.name,
+                                           value: property.reportValue)
+                        }
+                    } else {
+                        ResultValueRow(title: "编码质量档", value: "未报告",
+                                       note: "旧记录没有保存编码器会话属性")
+                    }
+                }.modifier(PanelStyle())
+            }
+        } else if row.group == "解码" {
+            ResultSection(title: "解码素材") {
+                VStack(alignment: .leading, spacing: 12) {
+                    if let fixture = row.decodeFixtureEvidence {
+                        ResultValueRow(title: "固定素材 ID", value: fixture.identifier)
+                        ResultValueRow(title: "SHA-256", value: fixture.sha256)
+                    } else {
+                        ResultEvidenceText(value: "此记录未保存解码素材校验信息。")
+                    }
+                }.modifier(PanelStyle())
+            }
         }
     }
 
@@ -287,11 +379,18 @@ private struct ResultMetric: View {
 private struct ResultValueRow: View {
     let title: String
     let value: String
+    var note = ""
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Text(title).font(DesignTokens.Font.small).foregroundColor(DesignTokens.Text.secondary)
                 .frame(width: 76, alignment: .leading).padding(.top, 2)
-            ResultEvidenceText(value: value)
+            VStack(alignment: .leading, spacing: 4) {
+                ResultEvidenceText(value: value)
+                if !note.isEmpty {
+                    Text(note).font(DesignTokens.Font.small).foregroundColor(DesignTokens.Text.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
     }
 }

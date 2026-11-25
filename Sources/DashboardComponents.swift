@@ -1,6 +1,15 @@
 import SwiftUI
 
 enum CodecPresentation {
+    static func displayGPUName(_ name: String) -> String {
+        name.components(separatedBy: " · ").map { device in
+            if let alias = device.range(of: " (NVMTL over "), alias.lowerBound != device.startIndex {
+                return String(device[..<alias.lowerBound])
+            }
+            return device
+        }.joined(separator: " · ")
+    }
+
     static func classification(_ row: BenchRow) -> (String, Color) {
         switch row.status {
         case .cancelled: return ("已取消", .sub)
@@ -20,9 +29,20 @@ enum CodecPresentation {
             return ("路径待确认", .statusWarning)
         }
     }
+    static func failureSummary(_ row: BenchRow) -> String? {
+        if let code = row.failureOSStatus {
+            return "\(row.failureStage ?? "VideoToolbox") · \(code)"
+        }
+        return row.failureStage
+    }
+
     static let plan: [BenchRow] = CodecTestPlan.cases.map {
         BenchRow(group: $0.group, item: $0.item, mode: $0.mode, ok: false, fps: 0, engine: "", detail: "尚未测试", status: .notTested)
     }
+}
+
+enum DashboardLayout {
+    static let environmentWidth: CGFloat = 232
 }
 
 struct TestOverview: View {
@@ -33,34 +53,56 @@ struct TestOverview: View {
     let finished: Bool
     let cancelled: Bool
     let running: Bool
-    private var passed: Int { rows.filter(\.hasValidMeasurement).count }
-    private var invalidMeasurements: Int {
-        rows.filter { $0.status == .passed && $0.ok && !$0.hasValidMeasurement }.count
-    }
-    private var failed: Int { rows.filter { $0.status == .failed }.count }
-    private var summary: String {
+    let coldStartupSummary: String
+
+    private var completionNote: String? {
+        let failed = rows.filter { $0.status == .failed }.count
+        if failed > 0 { return "\(failed) 项失败" }
         if cancelled { return "已取消" }
-        if total == 0 { return "请选择测试项目" }
-        if rows.isEmpty { return "3 次测量 · FPS 中位数" }
-        return "\(passed) 通过"
-            + (failed > 0 ? " · \(failed) 失败" : "")
-            + (invalidMeasurements > 0 ? " · \(invalidMeasurements) 项测量值无效" : "")
-            + (running ? " · 进行中" : finished ? "" : " · 未完成") + " · 3 次中位数"
+        if rows.contains(where: { $0.status == .unverified || ($0.status == .passed && !$0.hasValidMeasurement) }) {
+            return "有项目待核对"
+        }
+        if !finished && !running && completed > 0 { return "未完成" }
+        return nil
     }
+
     var body: some View {
-        HStack(spacing: 16) {
-            OverviewPath(title: "硬件编码", group: "编码", rows: rows, plan: plan)
-            Hairline(axis: .vertical).frame(height: 28)
-            OverviewPath(title: "硬件解码", group: "解码", rows: rows, plan: plan)
-            Spacer(minLength: 12)
-            VStack(alignment: .trailing, spacing: 4) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("本轮完成").font(DesignTokens.Font.small).foregroundColor(.sub)
-                    Text("\(completed)/\(total)").font(DesignTokens.Font.title1.weight(.medium).monospacedDigit())
-                }
-                Text(summary).font(DesignTokens.Font.small).foregroundColor(.txt)
-            }.fixedSize()
-        }.padding(.horizontal, 12).padding(.vertical, 8)
+        HStack(spacing: 12) {
+            HStack(spacing: 16) {
+                OverviewPath(title: "硬件编码", group: "编码", rows: rows, plan: plan)
+                Hairline(axis: .vertical).frame(height: 28)
+                OverviewPath(title: "硬件解码", group: "解码", rows: rows, plan: plan)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+
+            HStack(alignment: .top, spacing: 13) {
+                metric("本轮硬件", value: total > 0 ? "\(completed)/\(total)" : "—", note: completionNote)
+                Hairline(axis: .vertical).frame(height: 34).padding(.top, 3)
+                metric("首次会话", value: coldStartupSummary)
+                    .help("独立进程首次硬件会话的通过数")
+            }
+            .padding(.horizontal, 12)
+            .frame(width: DashboardLayout.environmentWidth)
+        }
+    }
+
+    private func metric(_ title: String, value: String, note: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title)
+                .font(DesignTokens.Font.small)
+                .foregroundColor(.sub)
+            Text(value)
+                .font(DesignTokens.Font.title2.monospacedDigit())
+                .foregroundColor(value == "未测" || value == "—" ? .sub : .txt)
+            if let note {
+                Text(note)
+                    .font(DesignTokens.Font.small)
+                    .foregroundColor(.sub)
+            }
+        }
+        .lineLimit(1)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

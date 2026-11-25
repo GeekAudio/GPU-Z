@@ -22,11 +22,12 @@ struct ResultSemanticsTests {
         }
         func row(group: String = "编码", item: String = "H.264 1080p", mode: String = "强制硬件",
                  status: BenchStatus = .passed, ok: Bool = true, hardware: Bool? = true, fps: Double? = nil,
-                 attribution: BenchAttribution = .unknown, nvidia: Bool = false) -> BenchRow {
+                 attribution: BenchAttribution = .unknown, nvidia: Bool = false,
+                 fixture: DecodeFixtureEvidence? = nil) -> BenchRow {
             BenchRow(group: group, item: item, mode: mode, ok: ok, fps: fps ?? (ok ? 240 : 0),
                      engine: "fixture engine", detail: "固定测试证据", status: status,
                      hardwareAccelerated: hardware, attribution: attribution,
-                     isNVIDIAConfirmed: nvidia)
+                     isNVIDIAConfirmed: nvidia, decodeFixtureEvidence: fixture)
         }
         func reportJSON(_ value: String) throws -> CodecReport {
             let decoder = JSONDecoder()
@@ -102,6 +103,22 @@ struct ResultSemanticsTests {
         let validRatioText = SelfTest.renderText(env: [], encoders: [], results: [ratioHardware, ratioSoftware])
         check(validRatioText.contains("硬件 / 软件 = 4.00×"),
               "text report includes the shared ratio for a valid matching pair")
+        let fixtureA = DecodeFixtureEvidence(identifier: "test-hevc-v1", sha256: String(repeating: "a", count: 64))
+        let fixtureB = DecodeFixtureEvidence(identifier: "test-hevc-v2", sha256: String(repeating: "b", count: 64))
+        let decodeHardware = row(group: "解码", item: "HEVC 1080p", hardware: true, fixture: fixtureA)
+        let decodeSoftwareSameFixture = row(group: "解码", item: "HEVC 1080p", mode: "软件解码",
+            hardware: false, attribution: .software, fixture: fixtureA)
+        let decodeSoftwareDifferentFixture = row(group: "解码", item: "HEVC 1080p", mode: "软件解码",
+            hardware: false, attribution: .software, fixture: fixtureB)
+        let decodeSoftwareLegacy = row(group: "解码", item: "HEVC 1080p", mode: "软件解码",
+            hardware: false, attribution: .software)
+        check(decodeHardware.throughputRatio(comparedTo: decodeSoftwareSameFixture) == 1,
+              "decode throughput comparison accepts a matching immutable fixture identity")
+        check(decodeHardware.throughputRatio(comparedTo: decodeSoftwareDifferentFixture) == nil,
+              "decode throughput comparison rejects different fixed fixture identities")
+        check(row(group: "解码", item: "HEVC 1080p", hardware: true)
+              .throughputRatio(comparedTo: decodeSoftwareLegacy) == 1,
+              "legacy decode records with no fixture metadata retain the old ratio behavior")
         let automaticRatioHardware = row(item: "Auto HEVC 1080p", mode: "自动选择",
                                          hardware: true, fps: 240)
         let automaticRatioSoftware = row(item: "Auto HEVC 1080p", mode: "软件编码", hardware: false,
@@ -239,6 +256,10 @@ struct ResultSemanticsTests {
             attribution: .nvidiaConfirmed, isNVIDIAConfirmed: true,
             hardwareEvidence: "UsingHardware=true", gpuEvidence: "registry ID matched PCI vendor",
             nvidiaEvidence: "实际编码器身份和硬件属性一致", warningText: "未验证输出画质",
+            encoderQualityEvidence: EncoderQualityEvidence(reportedPreset: nil, sessionProperties: [
+                VTSessionPropertyEvidence(name: "ProfileLevel", status: 0, value: "hvc1_Main_AutoLevel"),
+                VTSessionPropertyEvidence(name: "PrioritizeEncodingSpeedOverQuality", status: -12900, value: nil),
+            ], outputBitrateBps: 7_900_000),
             statistics: statistics)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -249,6 +270,13 @@ struct ResultSemanticsTests {
               "row success status and throughput survive roundtrip")
         check(decodedRow.hardwareAccelerated == true && decodedRow.encoderID == detailedRow.encoderID,
               "hardware property and actual encoder ID survive roundtrip")
+        check(decodedRow.encoderQualityEvidence?.reportedPreset == nil
+              && decodedRow.encoderQualityEvidence?.presetStatus == .notReportedByVideoToolbox
+              && decodedRow.encoderQualityEvidence?.sessionProperties.count == 2
+              && decodedRow.encoderQualityEvidence?.sessionProperties[0].value == "hvc1_Main_AutoLevel"
+              && decodedRow.encoderQualityEvidence?.sessionProperties[1].status == -12900
+              && decodedRow.encoderQualityEvidence?.outputBitrateBps == 7_900_000,
+              "encoder preset status, actual VT readbacks and measured output bitrate survive roundtrip")
         check(decodedRow.gpuRegistryID == registryID && decodedRow.gpuVendorID == 0x10de,
               "GPU identifiers preserve exact integer values")
         check(decodedRow.gpuName == detailedRow.gpuName && decodedRow.attribution == .nvidiaConfirmed,
@@ -267,6 +295,29 @@ struct ResultSemanticsTests {
         check(decodedRow.statistics?.fpsMin == 230.25 && decodedRow.statistics?.fpsMax == 249.75
               && decodedRow.statistics?.bytesPerFrame == 32_768,
               "repeat range and bytes per frame survive roundtrip")
+        let decodeEvidenceRow = row(group: "解码", item: "HEVC 1080p", fixture: fixtureA)
+        let decodedEvidenceRow = try JSONDecoder().decode(BenchRow.self,
+            from: encoder.encode(decodeEvidenceRow))
+        check(decodedEvidenceRow.decodeFixtureEvidence == fixtureA,
+              "fixed decode fixture identifier and SHA-256 survive row JSON")
+        let legacyRowObject = try JSONSerialization.jsonObject(with: encodedRow) as! [String: Any]
+        var legacyRowWithoutNewEvidence = legacyRowObject
+        legacyRowWithoutNewEvidence.removeValue(forKey: "encoderQualityEvidence")
+        legacyRowWithoutNewEvidence.removeValue(forKey: "decodeFixtureEvidence")
+        let decodedLegacyRow = try JSONDecoder().decode(BenchRow.self,
+            from: JSONSerialization.data(withJSONObject: legacyRowWithoutNewEvidence))
+        check(decodedLegacyRow.encoderQualityEvidence == nil && decodedLegacyRow.decodeFixtureEvidence == nil,
+              "pre-evidence rows remain readable with unknown quality and fixture metadata")
+        let qualityText = SelfTest.renderText(env: [], encoders: [], results: [detailedRow])
+        check(qualityText.contains("会话 EncoderID：com.nvmtl.videoencoder.hevc.nvenc")
+              && qualityText.contains("可核实画质档 · 未报告")
+              && qualityText.contains("VideoToolbox 未提供通用 P 档位")
+              && qualityText.contains("实际输出码率 · 7900000 bit/s"),
+              "text report shows exact encoder identity, honest unknown preset, and output bitrate")
+        let fixtureText = SelfTest.renderText(env: [], encoders: [], results: [decodeEvidenceRow])
+        check(fixtureText.contains("解码素材 ID：test-hevc-v1")
+              && fixtureText.contains("解码素材 SHA-256：\(fixtureA.sha256)"),
+              "text report includes fixed decode fixture identity and checksum")
         let sameIdentity = row(item: "HEVC 1080p", status: .failed, ok: false, hardware: nil)
         check(sameIdentity.id == detailedRow.id, "same planned case retains ID when result state changes")
         check(row(group: "解码").id != nvidiaEncode.id && row(mode: "软件编码").id != nvidiaEncode.id

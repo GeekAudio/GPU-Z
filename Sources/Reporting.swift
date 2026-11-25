@@ -72,7 +72,7 @@ enum SelfTest {
         if rows.isEmpty { return "环境诊断，尚未测试" }
         if rows.contains(where: { $0.status == .cancelled }) { return "已取消，保留部分结果" }
         if rows.allSatisfy({ $0.status == .notTested }) { return "尚未测试" }
-        if rows.count < CodecBench.encodeCaseCount + CodecBench.decodeCaseCount { return "部分结果" }
+        if rows.count < CodecTestPlan.legacyCaseIDs.count { return "部分结果" }
         return "测试完成"
     }
 
@@ -156,6 +156,23 @@ enum SelfTest {
                 lines.append("  原始字段：status=\(row.status.rawValue) · ok=\(row.ok) · fps=\(row.fps) · NVIDIA标记=\(row.isNVIDIAConfirmed)")
                 if row.hasValidMeasurement { lines.append(String(format: "  吞吐：%.2f fps", row.fps)) }
                 lines.append("  实际引擎：\(row.engine)")
+                if row.group == "编码" {
+                    lines.append("  会话 EncoderID：\(row.encoderID.isEmpty ? "未报告" : row.encoderID)")
+                    if let quality = row.encoderQualityEvidence {
+                        lines.append("  编码质量证据（VideoToolbox 会话回读）")
+                        lines += quality.reportLines.map { "    \($0)" }
+                    } else {
+                        lines.append("  编码质量证据：此记录未保存")
+                    }
+                }
+                if row.group == "解码" {
+                    if let fixture = row.decodeFixtureEvidence {
+                        lines.append("  解码素材 ID：\(fixture.identifier)")
+                        lines.append("  解码素材 SHA-256：\(fixture.sha256)")
+                    } else {
+                        lines.append("  解码素材校验：此记录未保存")
+                    }
+                }
                 let nvidiaConfirmed = row.hasValidMeasurement && row.hardwareAccelerated == true
                     && row.isNVIDIAConfirmed
                 let nvidiaAttribution = nvidiaConfirmed ? "已确认"
@@ -165,14 +182,13 @@ enum SelfTest {
                 lines.append("  \(row.detail)")
                 lines.append("")
             }
-            lines.append("【同负载吞吐对照（未匹配输出画质）】")
-            for hardware in results {
-                for software in results where software.group == hardware.group && software.item == hardware.item {
-                    guard let ratio = hardware.throughputRatio(comparedTo: software) else { continue }
-                    lines.append(String(format: "%@ %@：硬件 / 软件 = %.2f×；仅限本次设置和输入。",
-                                        hardware.group, hardware.item, ratio))
-                    break
-                }
+            let comparisons = results.compactMap { hardware -> String? in
+                guard let ratio = hardware.softwareRatio(in: results) else { return nil }
+                return String(format: "%@ %@：硬件 / 软件 = %.2f×。仅限本次设置和输入。",
+                              hardware.group, hardware.item, ratio)
+            }
+            if !comparisons.isEmpty {
+                lines += ["【同负载吞吐对照（未匹配输出画质）】"] + comparisons
             }
         }
         lines += ["", "【测量方法与局限】", CodecBench.measurementDescription,
@@ -224,13 +240,17 @@ enum SelfTest {
         return CommandLine.arguments[index + 1]
     }
 
-    static func saveOutputs(snapshot: EnvironmentSnapshot, results: [BenchRow], wasCancelled: Bool = false) {
+    static func saveOutputs(snapshot: EnvironmentSnapshot, results: [BenchRow], wasCancelled: Bool = false,
+                            plannedCaseIDs: [String]? = nil) {
         let text = renderText(env: snapshot.rows, encoders: snapshot.encoders, results: results,
-                              driverReport: snapshot.driver, environmentDate: snapshot.capturedAt, wasCancelled: wasCancelled)
+                              driverReport: snapshot.driver, environmentDate: snapshot.capturedAt,
+                              wasCancelled: wasCancelled, plannedCaseIDs: plannedCaseIDs)
         let path = argument("--output") ?? "/tmp/nvcodec-selftest.txt"
         do {
             let json = try renderJSON(env: snapshot.rows, encoders: snapshot.encoders, results: results,
-                                      driverReport: snapshot.driver, environmentDate: snapshot.capturedAt, wasCancelled: wasCancelled, decoderCapabilities: snapshot.decoderCaps)
+                                      driverReport: snapshot.driver, environmentDate: snapshot.capturedAt,
+                                      wasCancelled: wasCancelled, decoderCapabilities: snapshot.decoderCaps,
+                                      plannedCaseIDs: plannedCaseIDs)
             try (path.lowercased().hasSuffix(".json") ? json : text).write(toFile: path, atomically: true, encoding: .utf8)
             print("报告已写入 \(path)")
             if let jsonPath = argument("--json-output"), jsonPath != path {
@@ -245,10 +265,12 @@ enum SelfTest {
 
     static func run(diagnosticsOnly: Bool = false) {
         print("GPU-Z · NVIDIA 编解码诊断 · \(diagnosticsOnly ? "环境诊断" : "完整测试")")
+        let plannedCaseIDs = diagnosticsOnly ? nil : CodecTestPlan.allCaseIDs
         var log: RunLogRecorder?
         do {
             let store = try DiagnosticLogStore()
-            log = try RunLogRecorder(store: store, kind: diagnosticsOnly ? "命令行环境诊断" : "命令行完整测试") { message in
+            log = try RunLogRecorder(store: store, kind: diagnosticsOnly ? "命令行环境诊断" : "命令行完整测试",
+                                     plannedCaseIDs: plannedCaseIDs) { message in
                 FileHandle.standardError.write(Data("日志未完整留存：\(message)\n".utf8))
             }
         } catch {
@@ -286,8 +308,9 @@ enum SelfTest {
         }
         log?.finish(cancelled: wasCancelled, failed: processFailed)
         print(renderText(env: snapshot.rows, encoders: snapshot.encoders, results: rows,
-                         driverReport: snapshot.driver, environmentDate: snapshot.capturedAt, wasCancelled: wasCancelled))
-        saveOutputs(snapshot: snapshot, results: rows, wasCancelled: wasCancelled)
+                         driverReport: snapshot.driver, environmentDate: snapshot.capturedAt,
+                         wasCancelled: wasCancelled, plannedCaseIDs: plannedCaseIDs))
+        saveOutputs(snapshot: snapshot, results: rows, wasCancelled: wasCancelled, plannedCaseIDs: plannedCaseIDs)
     }
 }
 

@@ -5,7 +5,7 @@
 ## 假设与适用范围
 
 - 最低系统为 macOS 11，保留现有 AppKit 应用入口与标准窗口，不为使用新 API 提高最低版本。
-- 主窗口默认内容尺寸为 860 × 670 pt，最小为 840 × 660 pt；右侧环境栏保留 232 pt，九项测试常驻主仪表盘。
+- 主窗口默认内容尺寸为 860 × 670 pt，最小为 840 × 660 pt；右侧环境栏保留 232 pt。主仪表盘的四行两列矩阵包含八项硬件测试。软件对照单独打开。
 - 浅色、深色、系统强调色、窗口激活状态均跟随系统。截图工具指定外观只用于验证，不改变正常启动策略。
 - 所有颜色从系统语义 `NSColor` 或系统材质获得；不以一组固定浅灰或深灰 RGB 模仿系统，也不把绿色当作整个界面的底色。
 - 正文目标对比度为 4.5:1，次要文字为 3:1；用于传递信息的图标目标为 3:1。状态同时提供文字和符号，不能只靠红、绿或蓝区分。
@@ -37,7 +37,7 @@
 | 详细证据与反馈窗口 | 原生 `.sheet` 的系统表面 | 系统自动处理 | L4 |
 | 键盘焦点 | 控件自身的系统焦点环 | 系统自动处理 | 当前控件 |
 
-实际令牌集中在 `DesignTokens.Text / Surface / Stroke / Interaction / Status / Font`。主面板和九宫格卡片分别使用 `Surface.content / Surface.control`，二者均来自 `controlBackgroundColor`，卡片再叠加交互状态。L0 的 `windowBackgroundColor` 在当前测试主机中恰好与 control 同色，不能据此假定所有 macOS 版本都相同。
+实际令牌集中在 `DesignTokens.Text / Surface / Stroke / Interaction / Status / Font`。主面板和测试卡片分别使用 `Surface.content / Surface.control`，二者均来自 `controlBackgroundColor`，卡片再叠加交互状态。L0 的 `windowBackgroundColor` 在当前测试主机中恰好与 control 同色，不能据此假定所有 macOS 版本都相同。
 
 卡片选中填充为 `Interaction.selection(active:)` 的 0.10 叠加，状态填充保留用户指定的 0.12；两者均使用 `labelColor` 作为必要文字和状态符号的前景。淡化选中层不是原生不透明选择背景，不能直接套用白色的 `alternateSelectedControlTextColor`。非强调选择与原生文本选择仍各用对应的系统语义。
 
@@ -73,7 +73,7 @@ v1.4.3 继续使用 macOS 标准 `Button`：普通操作用 `.bordered`，主操
 
 ## 可落地的 SwiftUI 与 AppKit 接口
 
-现有窗口入口见 [main.swift](../Sources/main.swift)，主区与九宫格见 [MainView.swift](../Sources/MainView.swift) 和 [DashboardComponents.swift](../Sources/DashboardComponents.swift)。下面的 Scene 示例用于说明 API 的作用域，不要求把现有 AppKit 入口重写为 SwiftUI `App`。
+现有窗口入口见 [main.swift](../Sources/main.swift)，主区与测试卡片见 [MainView.swift](../Sources/MainView.swift) 和 [DashboardComponents.swift](../Sources/DashboardComponents.swift)。下面的 Scene 示例用于说明 API 的作用域，不要求把现有 AppKit 入口重写为 SwiftUI `App`。
 
 ```swift
 // macOS 11 起可用：修饰 Scene，不是修饰普通 View。

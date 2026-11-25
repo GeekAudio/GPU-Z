@@ -8,6 +8,14 @@ EXECUTABLE_NAME="NVCodecTest"
 VERSION="$(cat VERSION)"
 OUT="build"
 APP="$OUT/$APP_NAME.app"
+FIXTURE_ASSETS=(h264-1080p-120f.h264 hevc-1080p-120f.hevc h264-4k-48f.h264 hevc-4k-48f.hevc)
+
+for ASSET in "${FIXTURE_ASSETS[@]}"; do
+  if [ ! -f "Resources/CodecFixtures/$ASSET" ]; then
+    echo "缺少固定解码素材：Resources/CodecFixtures/$ASSET" >&2
+    exit 1
+  fi
+done
 
 rm -rf "$APP"
 mkdir -p "$OUT" "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -33,6 +41,12 @@ lipo -create "${BINS[@]}" -output "$APP/Contents/MacOS/$EXECUTABLE_NAME"
 if [ -f Resources/AppIcon.icns ]; then
   cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 fi
+
+FIXTURES="$APP/Contents/Resources/CodecFixtures"
+mkdir -p "$FIXTURES"
+for ASSET in "${FIXTURE_ASSETS[@]}"; do
+  cp "Resources/CodecFixtures/$ASSET" "$FIXTURES/$ASSET"
+done
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
