@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Software baselines remain opt-in, and run beside the matching hardware case on request.
+/// Shows local results and runs the missing software or paired cases on request.
 struct SoftwareComparisonView: View {
     @ObservedObject var model: TestModel
     @Environment(\.presentationMode) private var presentationMode
@@ -35,31 +35,34 @@ struct SoftwareComparisonView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
+        let softwareCount = model.pendingComparisonCases(CodecTestPlan.softwareCaseIDs).count
+        let comparisonCount = model.pendingComparisonCases(CodecTestPlan.softwareComparisonCaseIDs).count
+        return HStack(spacing: 12) {
             Image(systemName: "cpu")
                 .font(DesignTokens.Font.title2)
                 .foregroundColor(.codecAccent)
                 .accessibilityHidden(true)
-            Text("软件对照").font(DesignTokens.Font.title2)
+            Text("软解对照").font(DesignTokens.Font.title2)
             Spacer(minLength: 8)
             Button {
                 model.startAllSoftwareTests()
             } label: {
-                Label("运行 6 项软件", systemImage: "play.fill")
+                Label(softwareCount == 0 ? "软件已测完" : "补测 \(softwareCount) 项软件", systemImage: "play.fill")
             }
-            .disabled(!model.canRun)
+            .disabled(!model.canRun || softwareCount == 0)
             .accessibilityIdentifier("software-run-all")
-            .help("运行六项软件编码与解码测试")
+            .help("补测缺少有效成绩的软件编码与解码项目")
 
             Button {
                 model.startAllSoftwareComparisons()
             } label: {
-                Label("运行 6 组软硬件对照", systemImage: "arrow.left.arrow.right")
+                Label(comparisonCount == 0 ? "对照已齐全" : "补齐 \(comparisonCount) 项对照",
+                      systemImage: "arrow.left.arrow.right")
             }
             .buttonStyle(NativeButtonStyle(prominent: true))
-            .disabled(!model.canRun)
+            .disabled(!model.canRun || comparisonCount == 0)
             .accessibilityIdentifier("software-compare-all")
-            .help("同一轮运行六项硬件测试和对应的六项软件基准")
+            .help("补测六组对照中缺少有效成绩的软硬件项目")
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
@@ -104,7 +107,7 @@ struct SoftwareComparisonView: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(Text("H.264 与 HEVC 软件测试矩阵"))
+        .accessibilityLabel(Text("软解对照测试矩阵"))
     }
 
     private var runProgress: some View {
@@ -137,12 +140,12 @@ struct SoftwareComparisonView: View {
     private var footer: some View {
         HStack(spacing: 8) {
             Text(selectedCaseID == nil
-                 ? "整机 CPU 含系统编解码服务及后台活动 · 点选卡片查看单项操作"
-                 : "整机 CPU 含系统编解码服务及后台活动")
+                 ? "复用同一测试环境的成绩 · 点选卡片查看单项详情"
+                 : "复用同一测试环境的成绩")
                 .font(DesignTokens.Font.small)
                 .foregroundColor(DesignTokens.Text.secondary)
                 .lineLimit(1)
-                .help(systemCPUUsageHelp)
+                .help("软硬件成绩可来自同一环境下的不同测试轮次。")
             Spacer()
             Button("完成") { presentationMode.wrappedValue.dismiss() }
                 .keyboardShortcut(.cancelAction)
@@ -153,18 +156,16 @@ struct SoftwareComparisonView: View {
     }
 
     private func softwareCell(_ testCase: SoftwareComparisonCase) -> some View {
-        let results = model.results
-        let plannedIDs = model.displayedCaseIDs
-        let softwareRow = uniqueResult(testCase.softwareID, results: results, plannedIDs: plannedIDs)
-        let hardwareRow = uniqueResult(testCase.hardwareID, results: results, plannedIDs: plannedIDs)
+        let softwareRow = model.comparisonResult(for: testCase.softwareID)
+        let hardwareRow = model.comparisonResult(for: testCase.hardwareID)
         let ratio = pairedRatio(softwareRow: softwareRow, hardwareRow: hardwareRow)
         let isSelected = selectedCaseID == testCase.softwareID
         let spokenResult = [
             ratio.map { String(format: "硬件 FPS 除以软件 FPS，%.2f 倍", $0) },
-            "软件 \(resultValue(softwareRow))",
+            "软件 \(measurementValue(softwareRow))",
             softwareStatus(softwareRow),
             softwareRow.map(systemCPUUsageLabel),
-            "硬件 \(hardwareValue(hardwareRow))",
+            "硬件 \(measurementValue(hardwareRow))",
             hardwareRow.map(systemCPUUsageLabel)
         ].compactMap { $0 }.joined(separator: "，")
 
@@ -185,48 +186,13 @@ struct SoftwareComparisonView: View {
                         }
                         .font(DesignTokens.Font.small)
                         .help(testCase.group == "编码"
-                              ? "硬件 FPS 除以软件 FPS。两路编码画质可能不同。"
-                              : "硬件 FPS 除以软件 FPS。两路解码使用同一份固定码流。")
+                              ? "硬件 FPS 除以软件 FPS。成绩可来自不同轮次，两路编码画质可能不同。"
+                              : "硬件 FPS 除以软件 FPS。成绩可来自不同轮次，两路解码使用同一份固定码流。")
                     }
                 }
 
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(resultValue(softwareRow))
-                        .font(DesignTokens.Font.title3.monospacedDigit())
-                        .lineLimit(1)
-                    Text(softwareStatus(softwareRow))
-                        .font(DesignTokens.Font.small)
-                        .foregroundColor(softwareStatusColor(softwareRow))
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                    if let softwareRow {
-                        Text(systemCPUUsageLabel(softwareRow))
-                            .font(DesignTokens.Font.small.monospacedDigit())
-                            .foregroundColor(DesignTokens.Text.secondary)
-                            .lineLimit(1)
-                            .help(systemCPUUsageHelp)
-                            .accessibilityIdentifier("software-cpu-\(testCase.softwareID)")
-                    }
-                }
-
-                HStack(spacing: 5) {
-                    Text("硬件")
-                        .foregroundColor(DesignTokens.Text.secondary)
-                    Text(hardwareValue(hardwareRow))
-                        .foregroundColor(DesignTokens.Text.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                    Spacer(minLength: 2)
-                    if let hardwareRow {
-                        Text(systemCPUUsageLabel(hardwareRow))
-                            .font(DesignTokens.Font.small.monospacedDigit())
-                            .foregroundColor(DesignTokens.Text.secondary)
-                            .lineLimit(1)
-                            .help(systemCPUUsageHelp)
-                            .accessibilityIdentifier("hardware-cpu-\(testCase.hardwareID)")
-                    }
-                }
-                .font(DesignTokens.Font.small.monospacedDigit())
+                measurementRow("软件", caseID: testCase.softwareID, row: softwareRow, isSoftware: true)
+                measurementRow("硬件", caseID: testCase.hardwareID, row: hardwareRow, isSoftware: false)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .padding(.horizontal, 10)
@@ -245,17 +211,39 @@ struct SoftwareComparisonView: View {
         .accessibilityIdentifier("software-select-\(testCase.softwareID)")
     }
 
+    private func measurementRow(_ title: String, caseID: String, row: BenchRow?, isSoftware: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(title)
+                .foregroundColor(DesignTokens.Text.secondary)
+                .frame(width: 30, alignment: .leading)
+            Text(measurementValue(row))
+                .font((isSoftware ? DesignTokens.Font.title3 : DesignTokens.Font.body).monospacedDigit())
+                .foregroundColor(isSoftware ? DesignTokens.Text.primary : DesignTokens.Text.secondary)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            if let row {
+                Text(systemCPUUsageLabel(row))
+                    .font(DesignTokens.Font.small.monospacedDigit())
+                    .foregroundColor(DesignTokens.Text.secondary)
+                    .lineLimit(1)
+                    .help(systemCPUUsageHelp)
+                    .accessibilityIdentifier("\(isSoftware ? "software" : "hardware")-cpu-\(caseID)")
+            }
+        }
+        .font(DesignTokens.Font.small)
+    }
+
     private var selectedTestCase: SoftwareComparisonCase? {
         guard let selectedCaseID = selectedCaseID else { return nil }
         return SoftwareComparisonCase.all.first { $0.softwareID == selectedCaseID }
     }
 
     private func selectedActionBar(for testCase: SoftwareComparisonCase) -> some View {
-        let results = model.results
-        let plannedIDs = model.displayedCaseIDs
-        let softwareRow = uniqueResult(testCase.softwareID, results: results, plannedIDs: plannedIDs)
-        let hardwareRow = uniqueResult(testCase.hardwareID, results: results, plannedIDs: plannedIDs)
+        let softwareRow = model.comparisonResult(for: testCase.softwareID)
+        let hardwareRow = model.comparisonResult(for: testCase.hardwareID)
         let ratio = pairedRatio(softwareRow: softwareRow, hardwareRow: hardwareRow)
+        let softwarePending = !model.pendingComparisonCases([testCase.softwareID]).isEmpty
+        let pairPending = !model.pendingComparisonCases([testCase.softwareID, testCase.hardwareID]).isEmpty
 
         return HStack(spacing: 8) {
             Text("\(testCase.group) · \(testCase.item)")
@@ -264,19 +252,19 @@ struct SoftwareComparisonView: View {
                 .accessibilityIdentifier("software-selected-title")
             Spacer(minLength: 4)
             Button {
-                model.startSingle(testCase.softwareID)
+                model.startSoftwareTest(caseID: testCase.softwareID)
             } label: {
-                Label("单跑软件", systemImage: "play.fill")
+                Label("补测软件", systemImage: "play.fill")
             }
-            .disabled(!model.canRun)
+            .disabled(!model.canRun || !softwarePending)
             .accessibilityIdentifier("software-run-selected")
 
             Button {
                 model.startSoftwareComparison(caseID: testCase.softwareID)
             } label: {
-                Label("单项对照", systemImage: "arrow.left.arrow.right")
+                Label("补齐对照", systemImage: "arrow.left.arrow.right")
             }
-            .disabled(!model.canRun)
+            .disabled(!model.canRun || !pairPending)
             .accessibilityIdentifier("software-compare-selected")
 
             Button("软件详情") {
@@ -297,37 +285,21 @@ struct SoftwareComparisonView: View {
         .accessibilityLabel(Text("所选测试操作"))
     }
 
-    private func uniqueResult(_ id: String, results: [BenchRow], plannedIDs: Set<String>) -> BenchRow? {
-        guard plannedIDs.contains(id) else { return nil }
-        let matches = results.filter { $0.id == id }
-        return matches.count == 1 ? matches[0] : nil
-    }
-
     private func pairedRatio(softwareRow: BenchRow?, hardwareRow: BenchRow?) -> Double? {
         guard let softwareRow, let hardwareRow,
               hardwareRow.group != "解码" || hardwareRow.decodeFixtureEvidence != nil else { return nil }
         return hardwareRow.throughputRatio(comparedTo: softwareRow)
     }
 
-    private func resultValue(_ row: BenchRow?) -> String {
-        guard let row, row.hasValidMeasurement else { return "— FPS" }
-        return String(format: "%.1f FPS", row.fps)
-    }
-
-    private func hardwareValue(_ row: BenchRow?) -> String {
-        guard let row else { return "尚无本轮结果" }
-        guard row.hasValidMeasurement else { return row.status.rawValue }
+    private func measurementValue(_ row: BenchRow?) -> String {
+        guard let row else { return "未测试" }
+        guard row.hasValidMeasurement else { return row.status == .passed ? "待验证" : row.status.rawValue }
         return String(format: "%.1f FPS", row.fps)
     }
 
     private func softwareStatus(_ row: BenchRow?) -> String {
         guard let row else { return "尚未测试" }
         return CodecPresentation.classification(row).0
-    }
-
-    private func softwareStatusColor(_ row: BenchRow?) -> Color {
-        guard let row else { return DesignTokens.Text.secondary }
-        return CodecPresentation.classification(row).1
     }
 
     private var systemCPUUsageHelp: String {

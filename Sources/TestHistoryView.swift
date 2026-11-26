@@ -558,7 +558,7 @@ private struct HistorySoftwareSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("软件对照").font(DesignTokens.Font.body.weight(.semibold))
+                Text("软解对照").font(DesignTokens.Font.body.weight(.semibold))
                 Spacer()
                 Text("硬件 / 软件吞吐比")
                     .font(DesignTokens.Font.small)

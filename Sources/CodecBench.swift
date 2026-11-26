@@ -118,15 +118,21 @@ enum CodecBench {
     /// Report the actual VT error; these errors alone do not identify a hardware capability limit.
     static func sessionCreationError(_ status: OSStatus, encoding: Bool) -> String {
         let operation = encoding ? "编码" : "解码"
-        let reason: String
+        let (symbol, explanation) = sessionCreationFailureReason(status)
+        let reason = symbol.map { "\($0)：\(explanation)" } ?? explanation
+        return "创建\(operation)会话失败 (\(status))；\(reason)；\(sessionCreationFailureContext)"
+    }
+
+    static let sessionCreationFailureContext = "尚未提交帧，具体触发原因需结合驱动日志"
+
+    static func sessionCreationFailureReason(_ status: OSStatus) -> (symbol: String?, explanation: String) {
         switch status {
-        case kVTCouldNotFindVideoEncoderErr: reason = "kVTCouldNotFindVideoEncoderErr：未找到符合请求的编码器"
-        case kVTCouldNotFindVideoDecoderErr: reason = "kVTCouldNotFindVideoDecoderErr：未找到符合请求的解码器"
-        case kVTVideoDecoderNotAvailableNowErr: reason = "kVTVideoDecoderNotAvailableNowErr：解码器当前不可用"
-        case kVTVideoEncoderNotAvailableNowErr: reason = "kVTVideoEncoderNotAvailableNowErr：编码器当前不可用"
-        default: reason = "VideoToolbox 未创建所请求的会话"
+        case kVTCouldNotFindVideoEncoderErr: return ("kVTCouldNotFindVideoEncoderErr", "未找到符合请求的编码器")
+        case kVTCouldNotFindVideoDecoderErr: return ("kVTCouldNotFindVideoDecoderErr", "未找到符合请求的解码器")
+        case kVTVideoDecoderNotAvailableNowErr: return ("kVTVideoDecoderNotAvailableNowErr", "解码器当前不可用")
+        case kVTVideoEncoderNotAvailableNowErr: return ("kVTVideoEncoderNotAvailableNowErr", "编码器当前不可用")
+        default: return (nil, "VideoToolbox 未创建所请求的会话")
         }
-        return "创建\(operation)会话失败 (\(status))；\(reason)；尚未提交帧，具体触发原因需结合驱动日志"
     }
 
     private struct PropertyReading {

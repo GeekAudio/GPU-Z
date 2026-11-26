@@ -11,7 +11,7 @@ enum ResultCategory: String, CaseIterable, Identifiable {
         case .nvidia: return "NVIDIA 已证实"
         case .systemHardware: return "系统硬件 · GPU 未确认"
         case .otherHardware: return "其他 GPU"
-        case .software: return "软件对照"
+        case .software: return "软件路径"
         case .attention: return "需关注 / 未完成"
         }
     }
@@ -49,6 +49,7 @@ final class TestModel: ObservableObject {
     @Published var hevcDec = false
     @Published var declaredDecoderCapabilities: EnvProbe.DecCaps?
     @Published var results: [BenchRow] = []
+    @Published private var comparisonResults: [String: BenchRow] = [:]
     @Published private(set) var selectedCaseIDs = CodecTestPlan.hardwareCaseIDs
     /// 本轮执行范围独立于下一轮勾选；旧报告缺少计划时仍按完整矩阵解释。
     @Published var plannedCaseIDs: [String]?
@@ -66,6 +67,7 @@ final class TestModel: ObservableObject {
     private var workerClient: CodecWorkerClient?
     private var activeLog: RunLogRecorder?
     private var refreshGeneration = UUID()
+    private var comparisonRunActive = false
     private let recordsDiagnostics: Bool
     private let makeWorker: ([String]) -> CodecWorkerClient
 
@@ -78,6 +80,9 @@ final class TestModel: ObservableObject {
     }
 
     func applyEnvironment(_ snapshot: EnvironmentSnapshot) {
+        if SoftwareComparisonResults.environment(in: env) != SoftwareComparisonResults.environment(in: snapshot.rows) {
+            comparisonResults.removeAll()
+        }
         env = snapshot.rows
         encoders = snapshot.encoders
         driverReport = snapshot.driver
@@ -93,7 +98,7 @@ final class TestModel: ObservableObject {
         applyEnvironment(EnvProbe.captureEnvironment())
     }
 
-    /// 刷新会清空旧测试，保证结果始终对应屏幕上的环境快照。
+    /// 刷新清空本轮状态，并从同一测试环境的历史报告恢复可复用成绩。
     func refresh() {
         guard !running && !refreshing else { return }
         refreshing = true
@@ -112,9 +117,12 @@ final class TestModel: ObservableObject {
             let snapshot = EnvProbe.captureEnvironment()
             log?.capture(snapshot)
             log?.finish(cancelled: false)
+            let history = (try? Self.testHistory(in: log?.store ?? existingStore)) ?? []
+            let restored = SoftwareComparisonResults.restore(from: history, matching: snapshot.rows)
             DispatchQueue.main.async {
                 guard let self = self, self.refreshGeneration == generation else { return }
                 self.applyEnvironment(snapshot)
+                self.comparisonResults.merge(restored) { current, _ in current }
             }
         }
     }
@@ -136,7 +144,7 @@ final class TestModel: ObservableObject {
     var tested: Bool { !results.isEmpty }
     var canRun: Bool { !running && !refreshing && !env.isEmpty }
     var runningSoftwareTests: Bool {
-        running && !CodecTestPlan.softwareCaseIDs.isDisjoint(with: plannedCaseIDs ?? [])
+        running && (comparisonRunActive || !CodecTestPlan.softwareCaseIDs.isDisjoint(with: plannedCaseIDs ?? []))
     }
     var canStart: Bool { canRun && !selectedCaseIDs.isEmpty }
     var canExport: Bool { !running && !refreshing && !env.isEmpty }
@@ -172,23 +180,45 @@ final class TestModel: ObservableObject {
 
     func startSingle(_ id: String) { start(caseIDs: [id]) }
 
-    func startAllSoftwareTests() { start(caseIDs: CodecTestPlan.softwareCaseIDs) }
+    func comparisonResult(for id: String) -> BenchRow? {
+        let current = displayedCaseIDs.contains(id) ? results.filter { $0.id == id } : []
+        let row = current.count == 1 ? current.first : nil
+        if let row, SoftwareComparisonResults.canReuse(row) { return row }
+        return comparisonResults[id] ?? row
+    }
 
-    func startAllSoftwareComparisons() { start(caseIDs: CodecTestPlan.softwareComparisonCaseIDs) }
+    func pendingComparisonCases(_ ids: Set<String>) -> Set<String> {
+        ids.filter { id in
+            guard let row = comparisonResult(for: id) else { return true }
+            return !SoftwareComparisonResults.canReuse(row)
+        }
+    }
 
-    /// Runs a software comparison beside its matching hardware case without changing
-    /// the hardware-only selection that will be used for the next regular round.
+    func startAllSoftwareTests() { startComparisonCases(CodecTestPlan.softwareCaseIDs) }
+
+    func startAllSoftwareComparisons() { startComparisonCases(CodecTestPlan.softwareComparisonCaseIDs) }
+
+    func startSoftwareTest(caseID: String) {
+        guard CodecTestPlan.softwareCaseIDs.contains(caseID) else { return }
+        startComparisonCases([caseID])
+    }
+
     func startSoftwareComparison(caseID: String) {
         guard CodecTestPlan.softwareCaseIDs.contains(caseID),
               let hardwareCaseID = CodecTestPlan.hardwareComparisonCaseID(forSoftwareCaseID: caseID) else { return }
-        start(caseIDs: [hardwareCaseID, caseID])
+        startComparisonCases([hardwareCaseID, caseID])
     }
 
-    private func start(caseIDs: Set<String>) {
+    private func startComparisonCases(_ ids: Set<String>) {
+        start(caseIDs: pendingComparisonCases(ids), fromComparison: true)
+    }
+
+    private func start(caseIDs: Set<String>, fromComparison: Bool = false) {
         guard canRun, let plan = try? CodecTestPlan.validate(Array(caseIDs)),
               let arguments = try? CodecTestPlan.arguments(for: Set(plan)) else { return }
         let client = makeWorker(["--codec-worker"] + arguments)
         workerClient = client
+        comparisonRunActive = fromComparison
         plannedCaseIDs = plan
         running = true
         finished = false
@@ -219,6 +249,7 @@ final class TestModel: ObservableObject {
                     log?.record(row)
                     DispatchQueue.main.async {
                         guard let self else { return }
+                        if SoftwareComparisonResults.canReuse(row) { self.comparisonResults[row.id] = row }
                         if let index = self.results.firstIndex(where: { $0.id == row.id }) { self.results[index] = row }
                         else { self.results.append(row) }
                     }
@@ -228,6 +259,7 @@ final class TestModel: ObservableObject {
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.running = false
+                self.comparisonRunActive = false
                 self.wasCancelled = completion.cancelled
                 self.finished = completion.complete && !completion.cancelled && self.results.count == plan.count
                     && self.results.allSatisfy { $0.status != .notTested && $0.status != .cancelled }
@@ -278,15 +310,25 @@ final class TestModel: ObservableObject {
     /// 从独立的成绩档案读取，由历史页在后台调用。
     func testHistoryLoader() -> () throws -> [TestHistoryEntry] {
         let store = diagnosticStore
-        return {
-            guard let store else { return [] }
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            return try store.testHistorySnapshots().compactMap { entry in
-                guard let report = try? decoder.decode(CodecReport.self, from: Data(entry.reportJSON.utf8)),
-                      report.schemaVersion == 1, !report.results.isEmpty else { return nil }
-                return TestHistoryEntry(id: entry.id, createdAt: entry.createdAt, report: report)
-            }
+        return { try Self.testHistory(in: store) }
+    }
+
+    private static func testHistory(in store: DiagnosticLogStore?) throws -> [TestHistoryEntry] {
+        guard let store else { return [] }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try store.testHistorySnapshots().compactMap { entry in
+            guard let report = try? decoder.decode(CodecReport.self, from: Data(entry.reportJSON.utf8)),
+                  report.schemaVersion == 1, !report.results.isEmpty else { return nil }
+            return TestHistoryEntry(id: entry.id, createdAt: entry.createdAt, report: report)
+        }
+    }
+
+    func testHistoryClearer() -> () throws -> Void {
+        let store = diagnosticStore
+        return { [weak self] in
+            try store?.clearTestHistory()
+            DispatchQueue.main.async { [weak self] in self?.comparisonResults.removeAll() }
         }
     }
 

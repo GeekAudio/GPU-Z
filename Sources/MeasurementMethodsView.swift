@@ -21,7 +21,7 @@ struct MeasurementMethodsView: View {
                     Hairline()
                     MethodRule(title: "NVIDIA 解码", description: "需要本次会话的 GPU RegistryID 映射到 NVIDIA PCI 厂商标识。缺少设备标识时保留“归属未确认”；加载了 NVDEC 库不能代替会话证据。")
                     Hairline()
-                    MethodRule(title: "软件对照", description: "会话显式禁用硬件加速；属性未报告时，按官方禁用规格与缺省语义说明软件路径。")
+                    MethodRule(title: "软解对照", description: "软件编解码会话显式禁用硬件加速；属性未报告时，按官方禁用规格与缺省语义说明软件路径。")
                 }.modifier(PanelStyle())
             }
             MethodSection(title: "如何看待对照结果") {

@@ -70,6 +70,15 @@ struct FixedDecodeFixture {
               expectedSHA256: "da161736ebbe2e8b0d44ae5d8b3f7f08936a8413c8c4040688a5c62dedae5d80"),
     ]
 
+    static func expectedEvidence(for item: String) -> (id: String, sha256: String)? {
+        let asset = assets.first { asset in
+            let codec = asset.codec == kCMVideoCodecType_H264 ? "H.264" : "HEVC"
+            let resolution = asset.width == 1920 ? "1080p" : "4K"
+            return item == "\(codec) \(resolution)"
+        }
+        return asset.map { ($0.id, $0.expectedSHA256) }
+    }
+
     static func load(codec: CMVideoCodecType, width: Int = 1920,
                      bundle: Bundle = .main) throws -> FixedDecodeFixture {
         guard width == 1920 || width == 3840 else {

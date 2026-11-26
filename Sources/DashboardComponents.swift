@@ -247,7 +247,7 @@ struct CodecCaseCard: View {
         if active { return phase }
         if let code = row.failureOSStatus { return (row.failureStage ?? "VT 错误") + " · \(code)" }
         if row.status == .passed && row.ok && !row.hasValidMeasurement { return "测量值无效" }
-        let mode = row.mode.hasPrefix("软件") ? "软件对照" : "强制硬件"
+        let mode = row.mode.hasPrefix("软件") ? "软件路径" : "强制硬件"
         guard let stats = row.statistics else { return mode + " · 预热 8 帧" }
         if !row.hasValidMeasurement { return "输出 \(stats.frames)/\(stats.requestedFrames) 帧" }
         return mode + " · \(stats.frames) 帧"

@@ -2,6 +2,8 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+private let coldStartupSize = NSSize(width: 600, height: 572)
+
 final class ColdStartupIndicator: ObservableObject {
     @Published var report: ColdStartupReport?
 
@@ -21,7 +23,7 @@ extension AppDelegate: NSMenuItemValidation {
     @objc func showColdStartupCheck(_ sender: Any?) {
         guard canOpenColdStartupCheck, let window else { return }
 
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 600, height: 434),
+        let panel = NSPanel(contentRect: NSRect(origin: .zero, size: coldStartupSize),
                             styleMask: [.titled], backing: .buffered, defer: false)
         panel.title = "冷启动检测"
         panel.contentView = NSHostingView(rootView: ColdStartupView(
@@ -48,20 +50,18 @@ private struct ColdStartupView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("冷启动检测").font(DesignTokens.Font.title2)
-                Text("每项 1080p 检测各用一个新进程请求首次硬件会话，事先不枚举 Metal 设备或编码器。")
-                    .foregroundColor(DesignTokens.Text.secondary)
-            }
-            .padding(20)
+            guide
+                .padding(20)
             Hairline()
             if let report {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 8) {
                         ForEach(report.cases) { result in
                             resultRow(result)
                         }
-                    }.padding(20)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
                 }
             } else {
                 ProgressView("正在检测首次硬件会话…")
@@ -71,6 +71,7 @@ private struct ColdStartupView: View {
             HStack {
                 if let exportError {
                     Text(exportError).foregroundColor(DesignTokens.Status.warning)
+                        .fixedSize(horizontal: false, vertical: true)
                 } else if let report {
                     Text("通过 \(report.passedCount)/\(report.cases.count) 项")
                         .foregroundColor(DesignTokens.Text.secondary)
@@ -86,13 +87,45 @@ private struct ColdStartupView: View {
             }
             .padding(16)
         }
-        .frame(width: 600, height: 434)
+        .frame(width: coldStartupSize.width, height: coldStartupSize.height)
         .font(DesignTokens.Font.body)
         .foregroundColor(DesignTokens.Text.primary)
         .background(DesignTokens.Surface.window)
         .buttonStyle(NativeButtonStyle(prominent: false))
         .onAppear(perform: start)
         .onExitCommand { if report != nil { close() } }
+    }
+
+    private var guide: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("冷启动检测").font(DesignTokens.Font.title2)
+                Text("检查新进程第一次请求硬件编解码时，能否成功建立会话并输出完整帧。")
+                Text("H.264 和 HEVC 的 1080p 硬编、硬解各用一个独立进程。")
+                    .foregroundColor(DesignTokens.Text.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                guideRow("何时使用", "应用刚打开时硬件加速不可用，或稍后才恢复。")
+                guideRow("怎么看结果", """
+                    通过数表示成功完成首次会话的项目数。
+                    若常规硬件测试通过、这里失败，优先排查首次会话的初始化。
+                    """)
+            }
+            .modifier(PanelStyle())
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func guideRow(_ title: String, _ detail: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(title)
+                .font(DesignTokens.Font.body.weight(.semibold))
+                .frame(width: 76, alignment: .leading)
+            Text(detail)
+                .foregroundColor(DesignTokens.Text.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private func resultRow(_ result: ColdStartupCaseReport) -> some View {
@@ -103,29 +136,43 @@ private struct ColdStartupView: View {
                 Text(result.status.rawValue).font(DesignTokens.Font.small)
             }
             if let row = result.row {
-                Text(row.detail).foregroundColor(DesignTokens.Text.secondary)
-                if !row.encoderID.isEmpty {
-                    Text(row.encoderID).font(DesignTokens.Font.small)
-                        .foregroundColor(DesignTokens.Text.secondary)
-                }
-                if let quality = row.encoderQualityEvidence {
-                    DisclosureGroup("画质证据") {
-                        Text(quality.reportLines.joined(separator: "\n"))
-                            .font(DesignTokens.Font.small)
-                            .foregroundColor(DesignTokens.Text.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.top, 4)
+                DisclosureGroup("技术详情") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        if result.status == .sessionUnavailable, let status = row.failureOSStatus {
+                            let reason = CodecBench.sessionCreationFailureReason(status)
+                            Text(reason.explanation)
+                                .font(DesignTokens.Font.body)
+                                .foregroundColor(DesignTokens.Text.primary)
+                            Text(verbatim: "OSStatus \(status)")
+                            if let symbol = reason.symbol {
+                                Text(symbol).font(.system(size: 11, design: .monospaced))
+                            }
+                            Text(CodecBench.sessionCreationFailureContext)
+                        } else {
+                            Text(row.detail.replacingOccurrences(of: "；", with: "\n"))
+                        }
+                        if !row.encoderID.isEmpty {
+                            Text("编码器 ID").fontWeight(.semibold)
+                            Text(row.encoderID)
+                        }
+                        if let quality = row.encoderQualityEvidence {
+                            Text("画质证据").fontWeight(.semibold)
+                            Text(quality.reportLines.joined(separator: "\n"))
+                        }
+                        if let fixture = row.decodeFixtureEvidence {
+                            Text("固定码流").fontWeight(.semibold)
+                            Text(fixture.identifier)
+                            Text("SHA-256")
+                            Text(fixture.sha256).font(.system(size: 11, design: .monospaced))
+                        }
                     }
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 4)
                 }
-                if let fixture = row.decodeFixtureEvidence {
-                    DisclosureGroup("固定码流") {
-                        Text("\(fixture.identifier)\nSHA-256 \(fixture.sha256)")
-                            .font(DesignTokens.Font.small)
-                            .foregroundColor(DesignTokens.Text.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.top, 4)
-                    }
-                }
+                .font(DesignTokens.Font.small)
+                .foregroundColor(DesignTokens.Text.secondary)
             } else if let error = result.error {
                 Text(error).foregroundColor(DesignTokens.Text.secondary)
             }

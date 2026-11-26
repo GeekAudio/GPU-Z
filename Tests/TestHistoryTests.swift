@@ -133,6 +133,40 @@ struct TestHistoryTests {
         check(duplicate.value == "待验证" && duplicate.help.contains("多个结果行"),
               "duplicate canonical rows are surfaced as ambiguous instead of choosing one")
 
+        let environment = [EnvRow("系统", "macOS fixture"), EnvRow("架构", "x86_64"),
+                           EnvRow("CPU", "fixture CPU"), EnvRow("GPU", "fixture GPU")]
+        func comparisonHistory(_ rows: [BenchRow], secondsAgo: TimeInterval,
+                               environment recorded: [EnvRow]? = nil,
+                               methodology: String = CodecBench.measurementDescription) -> TestHistoryEntry {
+            TestHistoryEntry(id: String(secondsAgo), createdAt: now.addingTimeInterval(-secondsAgo),
+                report: report(rows: rows, plan: Array(Set(rows.map(\.id))),
+                               environment: recorded ?? environment, methodology: methodology))
+        }
+        let restored = SoftwareComparisonResults.restore(from: [
+            comparisonHistory([firstPassed], secondsAgo: 3),
+            comparisonHistory([secondPassed], secondsAgo: 2),
+            comparisonHistory([row(first, fps: 200)], secondsAgo: 1),
+            comparisonHistory([row(first, fps: 999)], secondsAgo: 0, environment: Array(environment.dropLast())),
+            comparisonHistory([row(second, fps: 999, hardware: false, attribution: .software)],
+                              secondsAgo: 0, methodology: "earlier benchmark workload")
+        ], matching: environment)
+        check(restored[first.id]?.fps == 200 && restored[second.id]?.fps == secondPassed.fps,
+              "restore picks each newest compatible measurement across sessions")
+        check(SoftwareComparisonResults.restore(from: [
+            comparisonHistory([firstPassed, firstPassed, failed, cancelled], secondsAgo: 1)
+        ], matching: environment).isEmpty,
+              "duplicate, failed and cancelled results cannot satisfy missing comparison cases")
+        let decode = cases[6]
+        let expected = FixedDecodeFixture.expectedEvidence(for: decode.item)!
+        let decodeGood = row(decode, fps: 120,
+                             fixture: DecodeFixtureEvidence(identifier: expected.id, sha256: expected.sha256))
+        let decodeStale = row(decode, fps: 999,
+                              fixture: DecodeFixtureEvidence(identifier: expected.id, sha256: String(repeating: "0", count: 64)))
+        check(SoftwareComparisonResults.restore(from: [
+            comparisonHistory([decodeGood], secondsAgo: 2), comparisonHistory([decodeStale], secondsAgo: 1)
+        ], matching: environment)[decode.id]?.fps == 120,
+              "a decode result from an older fixed stream cannot replace an eligible result")
+
         let newest = TestHistoryEntry(id: "newest", createdAt: now, report: fullReport)
         let newer = TestHistoryEntry(id: "newer", createdAt: now.addingTimeInterval(60), report: fullReport)
         let sorted = TestHistoryMatrix.rows(entries: [fullEntry, newest, newer])
@@ -199,23 +233,26 @@ struct TestHistoryTests {
     }
 
     private static func report(rows: [BenchRow], plan: [String]?, appVersion: String = "1.4.5",
-                               driver: DriverReport? = nil) -> CodecReport {
+                               driver: DriverReport? = nil, environment: [EnvRow] = [
+                                EnvRow("系统", "macOS fixture"), EnvRow("机型", "Mac fixture"),
+                                EnvRow("CPU", "Intel CPU fixture"), EnvRow("GPU", "NVIDIA fixture")],
+                               methodology: String = "fixture method") -> CodecReport {
         CodecReport(schemaVersion: 1, appVersion: appVersion, createdAt: Date(timeIntervalSince1970: 1_700_000_000),
             environmentCapturedAt: nil, target: "fixture", runState: "测试完成", wasCancelled: false,
-            environment: [EnvRow("系统", "macOS fixture"), EnvRow("机型", "Mac fixture"),
-                          EnvRow("CPU", "Intel CPU fixture"), EnvRow("GPU", "NVIDIA fixture")],
+            environment: environment,
             driverReport: driver, declaredDecoderCapabilities: nil, encoders: [],
-            plannedCaseIDs: plan, results: rows, methodology: "fixture method")
+            plannedCaseIDs: plan, results: rows, methodology: methodology)
     }
 
     private static func row(_ testCase: CodecTestPlan.Case, fps: Double,
                             status: BenchStatus = .passed, ok: Bool = true,
                             hardware: Bool? = true, attribution: BenchAttribution = .nvidiaConfirmed,
-                            evidence: String = "") -> BenchRow {
+                            evidence: String = "", fixture: DecodeFixtureEvidence? = nil) -> BenchRow {
         BenchRow(group: testCase.group, item: testCase.item, mode: testCase.mode,
             ok: ok, fps: fps, engine: "fixture engine", detail: "fixture detail",
             status: status, hardwareAccelerated: hardware,
             attribution: attribution, isNVIDIAConfirmed: attribution == .nvidiaConfirmed,
-            hardwareEvidence: evidence, gpuEvidence: evidence, nvidiaEvidence: evidence)
+            hardwareEvidence: evidence, gpuEvidence: evidence, nvidiaEvidence: evidence,
+            decodeFixtureEvidence: fixture)
     }
 }

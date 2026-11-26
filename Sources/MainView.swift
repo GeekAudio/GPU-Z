@@ -77,8 +77,7 @@ struct MainView: View {
             case .softwareComparison: SoftwareComparisonView(model: model)
             case .result(let row): ResultDetails(row: row, softwareRatio: row.softwareRatio(in: model.results)).background(Color.codecBackground)
             case .history:
-                let store = model.diagnosticStore
-                TestHistoryView(loadHistory: model.testHistoryLoader(), clearHistory: { try store?.clearTestHistory() })
+                TestHistoryView(loadHistory: model.testHistoryLoader(), clearHistory: model.testHistoryClearer())
             case .feedback:
                 FeedbackView(refreshHistory: model.feedbackHistoryLoader(), deleteDiagnostic: { try model.deleteDiagnostic($0) },
                              clearHistory: { try model.diagnosticStore?.clear() }, storageNotice: model.diagnosticLogError)
@@ -123,7 +122,7 @@ struct MainView: View {
                     .keyboardShortcut(.return, modifiers: .command)
                     .accessibilityLabel(Text(startTitle))
                     .accessibilityIdentifier("hardware-test-start")
-                    .help("运行勾选的 \(hardwareSelectionCount) 项硬件测试（⌘↩）。软件对照可单独运行")
+                    .help("运行勾选的 \(hardwareSelectionCount) 项硬件测试（⌘↩）。软解对照可单独打开")
             }
         }.frame(height: 28)
     }
@@ -132,11 +131,11 @@ struct MainView: View {
             HStack(spacing: 8) {
                 Text("编解码测试").font(DesignTokens.Font.title3)
                 Spacer()
-                Button("软件对照…") { sheet = .softwareComparison }
+                Button("软解对照") { sheet = .softwareComparison }
                     .buttonStyle(NativeButtonStyle())
                     .disabled(model.refreshing || (model.running && !model.runningSoftwareTests))
                     .accessibilityIdentifier("software-comparison")
-                    .help("按需运行软件编码与解码对照")
+                    .help("查看已有成绩，补测软件编码与解码项目")
                 Text("已选 \(hardwareSelectionCount)/\(CodecTestPlan.hardwareCaseIDs.count)").font(DesignTokens.Font.small).foregroundColor(.sub)
                 Button("全选") { model.selectCases(CodecTestPlan.hardwareCaseIDs) }
                     .buttonStyle(BorderlessButtonStyle()).disabled(model.running)

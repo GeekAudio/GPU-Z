@@ -55,9 +55,12 @@ struct TestSelectionModelTests {
                 guard let testCase = CodecTestPlan.cases.first(where: { $0.id == id }) else {
                     preconditionFailure("fixture received a noncanonical test ID: \(id)")
                 }
+                let isHardware = testCase.mode == "强制硬件"
+                let fixture = testCase.group == "解码" ? FixedDecodeFixture.expectedEvidence(for: testCase.item) : nil
                 let row = BenchRow(group: testCase.group, item: testCase.item, mode: testCase.mode,
                     ok: true, fps: 120, engine: "fixture", detail: "synthetic result", status: .passed,
-                    hardwareAccelerated: false, attribution: .software)
+                    hardwareAccelerated: isHardware, attribution: isHardware ? .systemHardwareUnknownGPU : .software,
+                    decodeFixtureEvidence: fixture.map { DecodeFixtureEvidence(identifier: $0.id, sha256: $0.sha256) })
                 script += emit(json(CodecWorkerEvent(kind: "row", row: row)))
             }
 
@@ -152,15 +155,18 @@ struct TestSelectionModelTests {
         model.selectCases(hardwareIDs)
         let nextRoundSelection = model.selectedCaseIDs
         model.startSoftwareComparison(caseID: secondID)
-        let comparisonPlan = [firstID, secondID]
-        check(model.running && model.plannedCaseIDs == comparisonPlan && model.totalCases == 2,
-              "software comparison starts its matching hardware case and software case together")
+        let comparisonPlan = [firstID]
+        check(model.runningSoftwareTests && model.plannedCaseIDs == comparisonPlan && model.totalCases == 1,
+              "a comparison with a saved software result starts its missing hardware case")
+        check(model.comparisonResult(for: secondID)?.fps == 120,
+              "the saved software result remains visible during a hardware-only fill")
         check(model.selectedCaseIDs == nextRoundSelection,
               "software comparison leaves the next hardware round selection unchanged")
         check(waitUntil { !model.running }, "software comparison fixture worker exits")
         check(factory.plans.count == 2 && factory.plans[1] == comparisonPlan
-              && model.finished && model.completedCount == 2 && model.results.map(\.id) == comparisonPlan,
-              "comparison worker and report use the canonical paired case IDs")
+              && model.finished && model.completedCount == 1 && model.results.map(\.id) == comparisonPlan
+              && model.comparisonResult(for: firstID)?.fps == 120 && model.comparisonResult(for: secondID)?.fps == 120,
+              "the worker reports only the new case while the comparison keeps both results")
 
         let plansBeforeInvalidComparison = factory.plans.count
         model.startSoftwareComparison(caseID: firstID)
@@ -178,13 +184,22 @@ struct TestSelectionModelTests {
               "one-click software launches only the six active software cases")
         check(waitUntil { !batchModel.running } && batchModel.completedCount == 6,
               "the software-only run completes with all its requested cases")
-        let pairedPlan = CodecTestPlan.defaultCaseIDs.filter(CodecTestPlan.softwareComparisonCaseIDs.contains)
+        batchModel.startAllSoftwareTests()
+        check(!batchModel.running && batchFactory.plans.count == 1,
+              "one-click software is a no-op when all six results are available")
+        let pairedPlan = CodecTestPlan.defaultCaseIDs.filter {
+            CodecTestPlan.softwareComparisonCaseIDs.contains($0) && CodecTestPlan.hardwareCaseIDs.contains($0)
+        }
         batchModel.startAllSoftwareComparisons()
-        check(batchModel.runningSoftwareTests && batchModel.plannedCaseIDs == pairedPlan && batchModel.totalCases == 12,
-              "one-click comparison requests six paired software and hardware paths")
+        check(batchModel.runningSoftwareTests && batchModel.plannedCaseIDs == pairedPlan && batchModel.totalCases == 6,
+              "one-click comparison only requests missing hardware paths after the software run")
         check(waitUntil { !batchModel.running } && !batchModel.runningSoftwareTests
-              && batchModel.completedCount == 12 && batchModel.selectedCaseIDs == hardwareIDs,
+              && batchModel.completedCount == 6 && batchModel.selectedCaseIDs == hardwareIDs,
               "the paired run completes without modifying the next hardware selection")
+        batchModel.startAllSoftwareComparisons()
+        check(!batchModel.running && batchFactory.plans.count == 2
+              && batchModel.pendingComparisonCases(CodecTestPlan.softwareComparisonCaseIDs).isEmpty,
+              "a completed comparison keeps all twelve results and starts no more workers")
 
         // Set-based selections are sent in canonical grid order, independent of click order.
         model.selectCases([thirdID, firstID])
