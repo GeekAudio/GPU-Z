@@ -11,7 +11,11 @@ struct SoftwareComparisonView: View {
         VStack(spacing: 0) {
             header
             Hairline()
-            if model.runningSoftwareTests { runProgress.padding(.horizontal, 16).padding(.top, 12) }
+            if model.refreshing {
+                refreshProgress.padding(.horizontal, 16).padding(.top, 12)
+            } else if model.runningSoftwareTests {
+                runProgress.padding(.horizontal, 16).padding(.top, 12)
+            }
             matrix.padding(16)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             if let selectedTestCase {
@@ -22,7 +26,8 @@ struct SoftwareComparisonView: View {
             Hairline()
             footer
         }
-        .frame(width: 840, height: (selectedCaseID == nil ? 490 : 542) + (model.runningSoftwareTests ? 52 : 0))
+        .frame(width: 840, height: (selectedCaseID == nil ? 490 : 542)
+               + (model.runningSoftwareTests || model.refreshing ? 52 : 0))
         .font(DesignTokens.Font.body)
         .foregroundColor(DesignTokens.Text.primary)
         .background(DesignTokens.Surface.window)
@@ -45,24 +50,33 @@ struct SoftwareComparisonView: View {
             Text("软解对照").font(DesignTokens.Font.title2)
             Spacer(minLength: 8)
             Button {
-                model.startAllSoftwareTests()
+                model.refresh()
             } label: {
-                Label(softwareCount == 0 ? "软编和软解已测完" : "补测 \(softwareCount) 项软编解码", systemImage: "play.fill")
+                Label("刷新环境", systemImage: "arrow.clockwise")
             }
-            .disabled(!model.canRun || softwareCount == 0)
-            .accessibilityIdentifier("software-run-all")
-            .help("补测缺少有效成绩的软编和软解项目")
+            .disabled(model.running || model.refreshing)
+            .accessibilityIdentifier("software-comparison-refresh")
+            .help("重新检查当前环境，清空页面成绩，保留测试历史")
 
             Button {
-                model.startAllSoftwareComparisons()
+                model.startAllSoftwareTests(force: softwareCount == 0)
             } label: {
-                Label(comparisonCount == 0 ? "对照已齐全" : "补齐 \(comparisonCount) 项对照",
+                Label(softwareCount == 0 ? "重测软编和软解" : "补测 \(softwareCount) 项软编解码", systemImage: "play.fill")
+            }
+            .disabled(!model.canRun)
+            .accessibilityIdentifier("software-run-all")
+            .help(softwareCount == 0 ? "重新测量全部软编和软解项目" : "补测缺少有效成绩的软编和软解项目")
+
+            Button {
+                model.startAllSoftwareComparisons(force: comparisonCount == 0)
+            } label: {
+                Label(comparisonCount == 0 ? "重测全部对照" : "补齐 \(comparisonCount) 项对照",
                       systemImage: "arrow.left.arrow.right")
             }
             .buttonStyle(NativeButtonStyle(prominent: true))
-            .disabled(!model.canRun || comparisonCount == 0)
+            .disabled(!model.canRun)
             .accessibilityIdentifier("software-compare-all")
-            .help("补测六组对照中缺少有效成绩的软硬件项目")
+            .help(comparisonCount == 0 ? "重新测量六组软硬件对照" : "只补测缺少有效成绩的软硬件项目")
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
@@ -114,11 +128,11 @@ struct SoftwareComparisonView: View {
         HStack(spacing: 10) {
             ProgressView(value: model.progress)
                 .frame(width: 120)
-                .accessibilityLabel("补测进度")
+                .accessibilityLabel("测试进度")
             Text(String(format: "%.0f%%", model.progress * 100))
                 .font(DesignTokens.Font.small.monospacedDigit())
                 .frame(width: 36, alignment: .trailing)
-            Text(model.status.isEmpty ? "正在补测…" : model.status)
+            Text(model.status.isEmpty ? "正在测试…" : model.status)
                 .font(DesignTokens.Font.small)
                 .foregroundColor(DesignTokens.Text.secondary)
                 .lineLimit(1)
@@ -137,11 +151,25 @@ struct SoftwareComparisonView: View {
         .accessibilityIdentifier("software-comparison-progress")
     }
 
+    private var refreshProgress: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.small)
+            Text("正在重新检查环境…")
+                .font(DesignTokens.Font.small)
+                .foregroundColor(DesignTokens.Text.secondary)
+            Spacer(minLength: 0)
+        }
+        .modifier(PanelStyle(padding: 9))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("software-comparison-refresh-progress")
+    }
+
     private var footer: some View {
         HStack(spacing: 8) {
             Text(selectedCaseID == nil
-                 ? "复用同一测试环境的成绩 · 点选卡片查看单项详情"
-                 : "复用同一测试环境的成绩")
+                 ? "显示本次成绩 · 历史成绩在「测试历史」查看"
+                 : "显示本次成绩")
                 .font(DesignTokens.Font.small)
                 .foregroundColor(DesignTokens.Text.secondary)
                 .lineLimit(1)
@@ -244,8 +272,8 @@ struct SoftwareComparisonView: View {
         let hardwareRow = model.comparisonResult(for: testCase.hardwareID)
         let ratio = pairedRatio(softwareRow: softwareRow, hardwareRow: hardwareRow)
         let paths = CodecPathLabels(group: testCase.group)
-        let softwarePending = !model.pendingComparisonCases([testCase.softwareID]).isEmpty
-        let pairPending = !model.pendingComparisonCases([testCase.softwareID, testCase.hardwareID]).isEmpty
+        let softwareRetest = model.pendingComparisonCases([testCase.softwareID]).isEmpty
+        let comparisonRetest = model.pendingComparisonCases([testCase.softwareID, testCase.hardwareID]).isEmpty
 
         return HStack(spacing: 8) {
             Text("\(testCase.group) · \(testCase.item)")
@@ -254,19 +282,19 @@ struct SoftwareComparisonView: View {
                 .accessibilityIdentifier("software-selected-title")
             Spacer(minLength: 4)
             Button {
-                model.startSoftwareTest(caseID: testCase.softwareID)
+                model.startSoftwareTest(caseID: testCase.softwareID, force: softwareRetest)
             } label: {
-                Label("补测\(paths.software)", systemImage: "play.fill")
+                Label(softwareRetest ? "重测\(paths.software)" : "补测\(paths.software)", systemImage: "play.fill")
             }
-            .disabled(!model.canRun || !softwarePending)
+            .disabled(!model.canRun)
             .accessibilityIdentifier("software-run-selected")
 
             Button {
-                model.startSoftwareComparison(caseID: testCase.softwareID)
+                model.startSoftwareComparison(caseID: testCase.softwareID, force: comparisonRetest)
             } label: {
-                Label("补齐对照", systemImage: "arrow.left.arrow.right")
+                Label(comparisonRetest ? "重测对照" : "补齐对照", systemImage: "arrow.left.arrow.right")
             }
-            .disabled(!model.canRun || !pairPending)
+            .disabled(!model.canRun)
             .accessibilityIdentifier("software-compare-selected")
 
             Button("\(paths.software)详情") {

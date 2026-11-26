@@ -98,11 +98,12 @@ final class TestModel: ObservableObject {
         applyEnvironment(EnvProbe.captureEnvironment())
     }
 
-    /// 刷新清空本轮状态，并从同一测试环境的历史报告恢复可复用成绩。
+    /// 重新采集环境并清空本次成绩。历史档案单独保留。
     func refresh() {
         guard !running && !refreshing else { return }
         refreshing = true
         results = []
+        comparisonResults.removeAll()
         plannedCaseIDs = nil
         finished = false
         wasCancelled = false
@@ -117,12 +118,9 @@ final class TestModel: ObservableObject {
             let snapshot = EnvProbe.captureEnvironment()
             log?.capture(snapshot)
             log?.finish(cancelled: false)
-            let history = (try? Self.testHistory(in: log?.store ?? existingStore)) ?? []
-            let restored = SoftwareComparisonResults.restore(from: history, matching: snapshot.rows)
             DispatchQueue.main.async {
                 guard let self = self, self.refreshGeneration == generation else { return }
                 self.applyEnvironment(snapshot)
-                self.comparisonResults.merge(restored) { current, _ in current }
             }
         }
     }
@@ -194,29 +192,34 @@ final class TestModel: ObservableObject {
         }
     }
 
-    func startAllSoftwareTests() { startComparisonCases(CodecTestPlan.softwareCaseIDs) }
-
-    func startAllSoftwareComparisons() { startComparisonCases(CodecTestPlan.softwareComparisonCaseIDs) }
-
-    func startSoftwareTest(caseID: String) {
-        guard CodecTestPlan.softwareCaseIDs.contains(caseID) else { return }
-        startComparisonCases([caseID])
+    func startAllSoftwareTests(force: Bool = false) {
+        startComparisonCases(CodecTestPlan.softwareCaseIDs, force: force)
     }
 
-    func startSoftwareComparison(caseID: String) {
+    func startAllSoftwareComparisons(force: Bool = false) {
+        startComparisonCases(CodecTestPlan.softwareComparisonCaseIDs, force: force)
+    }
+
+    func startSoftwareTest(caseID: String, force: Bool = false) {
+        guard CodecTestPlan.softwareCaseIDs.contains(caseID) else { return }
+        startComparisonCases([caseID], force: force)
+    }
+
+    func startSoftwareComparison(caseID: String, force: Bool = false) {
         guard CodecTestPlan.softwareCaseIDs.contains(caseID),
               let hardwareCaseID = CodecTestPlan.hardwareComparisonCaseID(forSoftwareCaseID: caseID) else { return }
-        startComparisonCases([hardwareCaseID, caseID])
+        startComparisonCases([hardwareCaseID, caseID], force: force)
     }
 
-    private func startComparisonCases(_ ids: Set<String>) {
-        start(caseIDs: pendingComparisonCases(ids), fromComparison: true)
+    private func startComparisonCases(_ ids: Set<String>, force: Bool) {
+        start(caseIDs: force ? ids : pendingComparisonCases(ids), fromComparison: true)
     }
 
     private func start(caseIDs: Set<String>, fromComparison: Bool = false) {
         guard canRun, let plan = try? CodecTestPlan.validate(Array(caseIDs)),
               let arguments = try? CodecTestPlan.arguments(for: Set(plan)) else { return }
         let client = makeWorker(["--codec-worker"] + arguments)
+        comparisonResults = comparisonResults.filter { !caseIDs.contains($0.key) }
         workerClient = client
         comparisonRunActive = fromComparison
         plannedCaseIDs = plan
@@ -310,26 +313,21 @@ final class TestModel: ObservableObject {
     /// 从独立的成绩档案读取，由历史页在后台调用。
     func testHistoryLoader() -> () throws -> [TestHistoryEntry] {
         let store = diagnosticStore
-        return { try Self.testHistory(in: store) }
-    }
-
-    private static func testHistory(in store: DiagnosticLogStore?) throws -> [TestHistoryEntry] {
-        guard let store else { return [] }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return try store.testHistorySnapshots().compactMap { entry in
-            guard let report = try? decoder.decode(CodecReport.self, from: Data(entry.reportJSON.utf8)),
-                  report.schemaVersion == 1, !report.results.isEmpty else { return nil }
-            return TestHistoryEntry(id: entry.id, createdAt: entry.createdAt, report: report)
+        return {
+            guard let store else { return [] }
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return try store.testHistorySnapshots().compactMap { entry in
+                guard let report = try? decoder.decode(CodecReport.self, from: Data(entry.reportJSON.utf8)),
+                      report.schemaVersion == 1, !report.results.isEmpty else { return nil }
+                return TestHistoryEntry(id: entry.id, createdAt: entry.createdAt, report: report)
+            }
         }
     }
 
     func testHistoryClearer() -> () throws -> Void {
         let store = diagnosticStore
-        return { [weak self] in
-            try store?.clearTestHistory()
-            DispatchQueue.main.async { [weak self] in self?.comparisonResults.removeAll() }
-        }
+        return { try store?.clearTestHistory() }
     }
 
     /// 主线程只复制当前值；历史读取和临时报告脱敏由反馈窗口在后台执行。
@@ -387,5 +385,29 @@ final class TestModel: ObservableObject {
             alert.messageText = "报告保存失败"
             alert.runModal()
         }
+    }
+}
+
+/// Reuse valid measurements while the current test environment and workload still match.
+enum SoftwareComparisonResults {
+    private static let environmentKeys: Set<String> = ["系统", "架构", "CPU", "GPU", "机型", "NullMoth 驱动", "内核扩展"]
+
+    static func environment(in rows: [EnvRow]) -> [String: String] {
+        rows.filter { environmentKeys.contains($0.key) }
+            .reduce(into: [:]) { $0[$1.key] = $1.value }
+    }
+
+    static func canReuse(_ row: BenchRow) -> Bool {
+        guard CodecTestPlan.softwareComparisonCaseIDs.contains(row.id), row.hasValidMeasurement else { return false }
+        if CodecTestPlan.hardwareCaseIDs.contains(row.id) {
+            guard row.hardwareAccelerated == true else { return false }
+        } else {
+            guard row.hardwareAccelerated != true,
+                  row.attribution == .software || row.hardwareAccelerated == false else { return false }
+        }
+        guard row.group == "解码" else { return true }
+        guard let evidence = row.decodeFixtureEvidence,
+              let expected = FixedDecodeFixture.expectedEvidence(for: row.item) else { return false }
+        return evidence.identifier == expected.id && evidence.sha256 == expected.sha256
     }
 }

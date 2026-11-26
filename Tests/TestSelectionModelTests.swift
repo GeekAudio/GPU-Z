@@ -175,7 +175,7 @@ struct TestSelectionModelTests {
               "neither a hardware case nor the archived HEVC encode can start a software comparison")
 
         let batchFactory = FixtureWorkers(directory: directory.appendingPathComponent("software-batches"),
-                                           scenarios: [.complete, .complete])
+                                           scenarios: [.complete, .complete, .complete, .complete, .complete, .complete])
         try FileManager.default.createDirectory(at: batchFactory.directory, withIntermediateDirectories: false)
         let batchModel = makeTestModel(batchFactory)
         let softwarePlan = CodecTestPlan.defaultCaseIDs.filter(CodecTestPlan.softwareCaseIDs.contains)
@@ -200,6 +200,37 @@ struct TestSelectionModelTests {
         check(!batchModel.running && batchFactory.plans.count == 2
               && batchModel.pendingComparisonCases(CodecTestPlan.softwareComparisonCaseIDs).isEmpty,
               "a completed comparison keeps all twelve results and starts no more workers")
+
+        batchModel.startSoftwareTest(caseID: secondID, force: true)
+        check(batchModel.plannedCaseIDs == [secondID] && batchModel.comparisonResult(for: secondID) == nil
+              && batchModel.comparisonResult(for: firstID)?.fps == 120,
+              "retesting one software case clears that result and retains its hardware counterpart")
+        check(waitUntil { !batchModel.running } && batchModel.comparisonResult(for: secondID)?.fps == 120,
+              "the newly measured software result replaces its prior score")
+        batchModel.startSoftwareComparison(caseID: secondID, force: true)
+        check(batchFactory.plans.last == [firstID, secondID] && batchModel.runningSoftwareTests,
+              "retesting one comparison reruns both paths despite complete results")
+        check(waitUntil { !batchModel.running }, "individual comparison rerun completes")
+        batchModel.startAllSoftwareTests(force: true)
+        check(batchFactory.plans.last == softwarePlan && batchModel.comparisonResult(for: firstID)?.fps == 120,
+              "retesting all software cases does not invalidate hardware scores")
+        check(waitUntil { !batchModel.running }, "software batch rerun completes")
+        batchModel.startAllSoftwareComparisons(force: true)
+        let fullComparisonPlan = CodecTestPlan.defaultCaseIDs.filter(CodecTestPlan.softwareComparisonCaseIDs.contains)
+        check(batchFactory.plans.last == fullComparisonPlan && batchModel.totalCases == 12,
+              "retesting all comparisons runs all twelve cases")
+        check(waitUntil { !batchModel.running }, "full comparison rerun completes")
+        let reopened = makeTestModel(batchFactory)
+        check(reopened.pendingComparisonCases(CodecTestPlan.softwareComparisonCaseIDs) == CodecTestPlan.softwareComparisonCaseIDs,
+              "a new model has no scores from the previous app session")
+
+        let decode = cases[6]
+        let expected = FixedDecodeFixture.expectedEvidence(for: decode.item)!
+        let decodeOld = BenchRow(group: decode.group, item: decode.item, mode: decode.mode,
+            ok: true, fps: 120, engine: "fixture", detail: "old bitstream", hardwareAccelerated: true,
+            decodeFixtureEvidence: DecodeFixtureEvidence(identifier: expected.id, sha256: String(repeating: "0", count: 64)))
+        check(!SoftwareComparisonResults.canReuse(decodeOld),
+              "a decode measurement from an older fixed stream cannot satisfy a comparison case")
 
         // Set-based selections are sent in canonical grid order, independent of click order.
         model.selectCases([thirdID, firstID])

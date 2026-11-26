@@ -6,50 +6,6 @@ struct TestHistoryEntry: Identifiable {
     let report: CodecReport
 }
 
-/// Only reuse measurements that describe the same machine, software and workload.
-enum SoftwareComparisonResults {
-    private static let requiredEnvironmentKeys: Set<String> = ["系统", "架构", "CPU", "GPU"]
-    private static let environmentKeys = requiredEnvironmentKeys.union(["机型", "NullMoth 驱动", "内核扩展"])
-
-    static func environment(in rows: [EnvRow]) -> [String: String] {
-        rows.filter { environmentKeys.contains($0.key) }
-            .reduce(into: [:]) { $0[$1.key] = $1.value }
-    }
-
-    static func canReuse(_ row: BenchRow) -> Bool {
-        guard CodecTestPlan.softwareComparisonCaseIDs.contains(row.id), row.hasValidMeasurement else { return false }
-        if CodecTestPlan.hardwareCaseIDs.contains(row.id) {
-            guard row.hardwareAccelerated == true else { return false }
-        } else {
-            guard row.hardwareAccelerated != true,
-                  row.attribution == .software || row.hardwareAccelerated == false else { return false }
-        }
-        guard row.group == "解码" else { return true }
-        guard let evidence = row.decodeFixtureEvidence,
-              let expected = FixedDecodeFixture.expectedEvidence(for: row.item) else { return false }
-        return evidence.identifier == expected.id && evidence.sha256 == expected.sha256
-    }
-
-    static func restore(from entries: [TestHistoryEntry], matching current: [EnvRow]) -> [String: BenchRow] {
-        let identity = environment(in: current)
-        guard requiredEnvironmentKeys.allSatisfy({ identity[$0]?.isEmpty == false }) else { return [:] }
-        var rows: [String: BenchRow] = [:]
-        for entry in TestHistoryMatrix.newestFirst(entries) {
-            let report = entry.report
-            guard report.methodology == CodecBench.measurementDescription,
-                  environment(in: report.environment) == identity else { continue }
-            let planned = Set(report.plannedCaseIDs ?? CodecTestPlan.legacyCaseIDs)
-            for (id, matches) in Dictionary(grouping: report.results, by: \.id) {
-                guard rows[id] == nil, planned.contains(id), matches.count == 1,
-                      let row = matches.first, canReuse(row) else { continue }
-                rows[id] = row
-            }
-            if rows.count == CodecTestPlan.softwareComparisonCaseIDs.count { break }
-        }
-        return rows
-    }
-}
-
 struct TestHistoryMatrixCell: Identifiable {
     let caseID: String
     let value: String
