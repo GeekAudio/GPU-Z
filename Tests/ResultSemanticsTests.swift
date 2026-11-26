@@ -124,7 +124,7 @@ struct ResultSemanticsTests {
                                            hardware: false, fps: 120, attribution: .software)
         let invalidAutomaticRatioText = SelfTest.renderText(env: [], encoders: [],
             results: [invalidAutomaticNVIDIA, invalidAutomaticSoftware])
-        check(!invalidAutomaticRatioText.contains("硬件 / 软件 ="),
+        check(!invalidAutomaticRatioText.contains("硬编 / 软编 ="),
               "an invalid automatic hardware result cannot produce a software ratio")
 
         let ratioHardware = row(item: "HEVC 1080p", hardware: true, fps: 480)
@@ -133,7 +133,7 @@ struct ResultSemanticsTests {
         check(ratioHardware.throughputRatio(comparedTo: ratioSoftware) == 4,
               "a valid matching hardware and software pair reports its finite ratio")
         let validRatioText = SelfTest.renderText(env: [], encoders: [], results: [ratioHardware, ratioSoftware])
-        check(validRatioText.contains("硬件 / 软件 = 4.00×"),
+        check(validRatioText.contains("硬编 / 软编 = 4.00×"),
               "text report includes the shared ratio for a valid matching pair")
         let fixtureA = DecodeFixtureEvidence(identifier: "test-hevc-v1", sha256: String(repeating: "a", count: 64))
         let fixtureB = DecodeFixtureEvidence(identifier: "test-hevc-v2", sha256: String(repeating: "b", count: 64))
@@ -157,7 +157,7 @@ struct ResultSemanticsTests {
                                          fps: 120, attribution: .software)
         let automaticRatioText = SelfTest.renderText(env: [], encoders: [],
             results: [automaticRatioHardware, automaticRatioSoftware])
-        check(automaticRatioText.contains("编码 Auto HEVC 1080p：硬件 / 软件 = 2.00×"),
+        check(automaticRatioText.contains("编码 Auto HEVC 1080p · 硬编 / 软编 = 2.00×"),
               "text report uses the shared ratio for a valid automatic hardware result")
         let overflowHardware = row(item: "HEVC 4K", hardware: true, fps: .greatestFiniteMagnitude)
         let tinySoftware = row(item: "HEVC 4K", mode: "软件编码", hardware: false,
@@ -194,11 +194,11 @@ struct ResultSemanticsTests {
               && invalidText.contains("原始字段：status=成功 · ok=false · fps=240.0 · NVIDIA标记=true"),
               "text export preserves raw status, ok, FPS, and NVIDIA flag values")
         check(!invalidText.contains("  吞吐：") && !invalidText.contains("NVIDIA 归属：已确认")
-              && !invalidText.contains("硬件 / 软件 ="),
+              && !invalidText.contains("硬编 / 软编 ="),
               "invalid rows emit no throughput, NVIDIA confirmation, or software ratio")
         let invalidRatioText = SelfTest.renderText(env: [], encoders: [],
             results: [invalidNVIDIAFlag, ratioSoftware])
-        check(!invalidRatioText.contains("硬件 / 软件 ="),
+        check(!invalidRatioText.contains("硬编 / 软编 ="),
               "a valid software baseline cannot produce a ratio for an invalid hardware result")
         let legacyNamedNVIDIA = BenchRow(group: "编码", item: "HEVC 1080p", mode: "强制硬件",
             ok: true, fps: 300, engine: "NVIDIA NVENC", detail: "只有名称，没有归属证据")

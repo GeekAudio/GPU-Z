@@ -11,7 +11,7 @@ enum ResultCategory: String, CaseIterable, Identifiable {
         case .nvidia: return "NVIDIA 已证实"
         case .systemHardware: return "系统硬件 · GPU 未确认"
         case .otherHardware: return "其他 GPU"
-        case .software: return "软件路径"
+        case .software: return "软编和软解"
         case .attention: return "需关注 / 未完成"
         }
     }

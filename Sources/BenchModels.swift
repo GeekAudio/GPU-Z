@@ -17,6 +17,35 @@ enum DecodeMode: String, CaseIterable, Identifiable, Codable {
     var id: String { rawValue }
 }
 
+/// Short labels for presentation. Case IDs and saved result modes use the raw values above.
+struct CodecPathLabels {
+    let software: String
+    let hardware: String
+
+    init(group: String) {
+        software = group == "解码" ? "软解" : "软编"
+        hardware = group == "解码" ? "硬解" : "硬编"
+    }
+
+    var ratio: String { "\(hardware) / \(software)" }
+
+    func mode(_ rawValue: String) -> String {
+        switch rawValue {
+        case EncodeMode.software.rawValue: return "软编"
+        case DecodeMode.software.rawValue: return "软解"
+        default: return rawValue
+        }
+    }
+
+    func evidence(_ text: String) -> String {
+        text.replacingOccurrences(of: "软件编码器", with: "软编码器")
+            .replacingOccurrences(of: "软件解码器", with: "软解码器")
+            .replacingOccurrences(of: "软件编码", with: "软编")
+            .replacingOccurrences(of: "软件解码", with: "软解")
+            .replacingOccurrences(of: "软件路径", with: "\(software)路径")
+    }
+}
+
 // MARK: - 结果
 
 /// 状态描述本项测试是否完成；NVIDIA 归属独立由证据字段表达。

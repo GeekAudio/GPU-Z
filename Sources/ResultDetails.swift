@@ -25,6 +25,7 @@ struct ResultDetails: View {
     }
 
     private var hasMeasurement: Bool { row.hasValidMeasurement }
+    private var paths: CodecPathLabels { CodecPathLabels(group: row.group) }
     private var statusTitle: String {
         row.status == .passed ? (hasMeasurement ? "测试通过" : "结果待验证") : row.status.rawValue
     }
@@ -41,7 +42,7 @@ struct ResultDetails: View {
     }
     private var identityTitle: String {
         if row.isNVIDIAConfirmed && (!hasMeasurement || row.hardwareAccelerated != true) { return "归属需核对" }
-        if row.attribution == .software { return "软件路径" }
+        if row.attribution == .software { return "\(paths.software)路径" }
         if row.isNVIDIAConfirmed {
             if usesDriverEncoderIdentity { return "NVIDIA 编码路径" }
             return row.gpuRegistryID != nil ? "NVIDIA" : "报告标记为 NVIDIA"
@@ -53,7 +54,7 @@ struct ResultDetails: View {
         if row.isNVIDIAConfirmed && (!hasMeasurement || row.hardwareAccelerated != true) {
             return "报告含 NVIDIA 标记，本项成绩或硬件属性未满足确认条件"
         }
-        if row.attribution == .software { return "本次走软件路径" }
+        if row.attribution == .software { return "本次走\(paths.software)路径" }
         if row.isNVIDIAConfirmed {
             if usesDriverEncoderIdentity { return "依据驱动自报，非独立芯片认证" }
             return row.gpuRegistryID != nil ? "依据本次会话的设备证据" : "设备标识缺失，请核对原始归属依据"
@@ -97,7 +98,7 @@ struct ResultDetails: View {
     }
 
     private var copyText: String {
-        var fields = ["\(row.group) · \(row.item) · \(row.mode)", "状态：\(row.status.rawValue)",
+        var fields = ["\(row.group) · \(row.item) · \(paths.mode(row.mode))", "状态：\(row.status.rawValue)",
          "结果有效：\(hasMeasurement ? "是" : "否")", "原始成功标记：\(row.ok)", "FPS：\(row.fps)",
          "整机 CPU 占用：\(systemCPUUsageText)",
          "测试进程 CPU 占用：\(workerProcessCPUUsageText)",
@@ -115,7 +116,7 @@ struct ResultDetails: View {
          "GPU 证据：\(row.gpuEvidence)", "NVIDIA 证据：\(row.nvidiaEvidence)",
          "提示：\(row.warningText)", "完整详情：\(row.detail)"]
         if let softwareRatio, softwareRatio.isFinite, softwareRatio > 0 {
-            fields += ["相对软件吞吐：\(String(format: "%.2f×", softwareRatio))",
+            fields += ["\(paths.ratio)吞吐比 \(String(format: "%.2f×", softwareRatio))",
                        row.group == "编码" ? "编码对照口径：只比较吞吐，不代表画质相同" : "解码对照口径：同一固定码流"]
         }
         if row.group == "编码" {
@@ -158,7 +159,7 @@ struct ResultDetails: View {
                                      symbol: row.status == .failed ? "exclamationmark.circle" : "info.circle", color: statusColor)
                     }
                     if !row.warningText.isEmpty {
-                        ResultNotice(title: "测试提示", text: row.warningText,
+                        ResultNotice(title: "测试提示", text: paths.evidence(row.warningText),
                                      symbol: "exclamationmark.triangle", color: DesignTokens.Status.warning)
                     }
                     executionPath
@@ -183,7 +184,7 @@ struct ResultDetails: View {
                 .font(DesignTokens.Font.title2).foregroundColor(.codecAccent).accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
                 Text("\(row.group) · \(row.item)").font(DesignTokens.Font.title2)
-                Text("\(row.mode) · 测试详情")
+                Text("\(paths.mode(row.mode)) · 测试详情")
                     .font(DesignTokens.Font.small).foregroundColor(DesignTokens.Text.secondary)
             }
             Spacer()
@@ -260,11 +261,11 @@ struct ResultDetails: View {
     private func softwareThroughputSummary(_ ratio: Double) -> some View {
         HStack(alignment: .center, spacing: 20) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("相对软件吞吐").font(DesignTokens.Font.small).foregroundColor(DesignTokens.Text.secondary)
+                Text("相对\(paths.software)吞吐").font(DesignTokens.Font.small).foregroundColor(DesignTokens.Text.secondary)
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(String(format: "%.2f×", ratio))
                         .font(DesignTokens.Font.title1.monospacedDigit())
-                    Text("硬件 / 软件").font(DesignTokens.Font.small).foregroundColor(DesignTokens.Text.secondary)
+                    Text(paths.ratio).font(DesignTokens.Font.small).foregroundColor(DesignTokens.Text.secondary)
                 }
             }
             Spacer(minLength: 0)
@@ -285,7 +286,7 @@ struct ResultDetails: View {
                     ResultMetric(title: "GPU 归属", value: identityTitle, note: identityNote)
                 }
                 Hairline()
-                ResultValueRow(title: "实际引擎", value: row.engine)
+                ResultValueRow(title: "实际引擎", value: paths.evidence(row.engine))
                 if !row.gpuName.isEmpty { ResultValueRow(title: "会话设备", value: row.gpuName) }
             }.modifier(PanelStyle())
         }
@@ -372,7 +373,7 @@ struct ResultDetails: View {
                 ResultEvidenceDisclosure(title: "GPU 与 NVIDIA 归属依据", subtitle: "设备身份与证据来源") {
                     VStack(alignment: .leading, spacing: 12) {
                         DetailField(title: "会话 GPU", value: row.gpuEvidence)
-                        DetailField(title: "NVIDIA 判断", value: row.nvidiaEvidence)
+                        DetailField(title: "NVIDIA 判断", value: paths.evidence(row.nvidiaEvidence))
                     }
                 }
                 Hairline()

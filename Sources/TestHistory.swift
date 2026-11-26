@@ -143,9 +143,11 @@ enum TestHistoryMatrix {
                     help: "\(title)\n状态写为通过，但没有有效的正数 FPS。\n\(result.detail)")
             }
             let fps = String(format: "%.1f FPS", locale: Locale(identifier: "en_US_POSIX"), result.fps)
+            let paths = CodecPathLabels(group: result.group)
             let evidence = [result.engine, result.hardwareEvidence, result.gpuEvidence,
                             result.nvidiaEvidence, result.warningText, result.detail]
                 .filter { !$0.isEmpty && $0 != "—" }
+                .map(paths.evidence)
                 .joined(separator: "\n")
             return TestHistoryMatrixCell(caseID: caseID, value: fps,
                 help: [title, "通过 · \(fps)", evidence].filter { !$0.isEmpty }.joined(separator: "\n"))
@@ -168,10 +170,11 @@ enum TestHistoryMatrix {
     }
 
     private static func statusHelp(_ title: String, _ result: BenchRow) -> String {
-        [title, "状态：\(result.status.rawValue)", result.engine, result.failureStage,
+        let paths = CodecPathLabels(group: result.group)
+        return [title, "状态：\(result.status.rawValue)", result.engine, result.failureStage,
          result.warningText, result.detail].compactMap { value in
             guard let value, !value.isEmpty, value != "—" else { return nil }
-            return value
+            return paths.evidence(value)
         }.joined(separator: "\n")
     }
 
@@ -187,6 +190,6 @@ enum TestHistoryMatrix {
 
     private static func caseDescription(_ caseID: String) -> String {
         guard let testCase = cases.first(where: { $0.id == caseID }) else { return caseID }
-        return "\(testCase.group) · \(testCase.item) · \(testCase.mode)"
+        return "\(testCase.group) · \(testCase.item) · \(CodecPathLabels(group: testCase.group).mode(testCase.mode))"
     }
 }

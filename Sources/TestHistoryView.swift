@@ -560,7 +560,7 @@ private struct HistorySoftwareSection: View {
             HStack {
                 Text("软解对照").font(DesignTokens.Font.body.weight(.semibold))
                 Spacer()
-                Text("硬件 / 软件吞吐比")
+                Text("硬 / 软吞吐比")
                     .font(DesignTokens.Font.small)
                     .foregroundColor(DesignTokens.Text.secondary)
                     .lineLimit(1)
@@ -603,6 +603,8 @@ private struct HistorySoftwareSection: View {
         }
         let ratio = matchingHardware.count == 1
             ? historySoftwareRatio(hardware: matchingHardware[0], report: entry.report) : nil
+        let paths = CodecPathLabels(group: testCase.group)
+        let summary = "\(testCase.item) \(paths.mode(testCase.mode))，\(cell.value)"
         if let result = savedResult(caseID: testCase.id) {
             Button { openResult(result, entry) } label: {
                 HistoryScoreCell(title: testCase.item.hasPrefix("H.264") ? "H.264" : "HEVC",
@@ -612,7 +614,7 @@ private struct HistorySoftwareSection: View {
                                  measured: cell.value.hasSuffix(" FPS"))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("\(testCase.group) \(testCase.item) \(testCase.mode)，\(cell.value)\(ratio.map { "，硬件与软件吞吐比 \(String(format: "%.2f", $0)) 倍" } ?? "")，查看详情")
+            .accessibilityLabel("\(summary)\(ratio.map { "，\(paths.ratio)吞吐比 \(String(format: "%.2f", $0)) 倍" } ?? "")，查看详情")
             .accessibilityIdentifier("history-case-\(testCase.id)")
             .help(softwareHelp(testCase: testCase, cell: cell, ratio: ratio))
         } else {
@@ -622,7 +624,7 @@ private struct HistorySoftwareSection: View {
                              selected: false,
                              measured: false)
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel("\(testCase.group) \(testCase.item) \(testCase.mode)，\(cell.value)")
+                .accessibilityLabel(summary)
                 .help(cell.help)
         }
     }
@@ -642,7 +644,7 @@ private struct HistorySoftwareSection: View {
                               cell: TestHistoryMatrixCell, ratio: Double?) -> String {
         var lines = [cell.help]
         if let ratio {
-            lines.append("配对硬件 / 软件吞吐比：\(String(format: "%.2f×", ratio))")
+            lines.append("配对\(CodecPathLabels(group: testCase.group).ratio)吞吐比 \(String(format: "%.2f×", ratio))")
             lines.append(testCase.group == "编码" ? "编码吞吐比不代表两路画质相同。" : "对照使用同一份固定码流。")
         }
         return lines.joined(separator: "\n")

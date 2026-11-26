@@ -21,7 +21,9 @@ enum CodecPresentation {
             if !row.hasValidMeasurement { return ("测量值无效", .statusWarning) }
             if row.isNVIDIAConfirmed && row.hardwareAccelerated == true { return ("NVIDIA 已证实", .statusSuccess) }
             if row.attribution == .otherHardware { return ("其他 GPU", .statusInfo) }
-            if row.attribution == .software || row.hardwareAccelerated == false { return ("软件路径", .sub) }
+            if row.attribution == .software || row.hardwareAccelerated == false {
+                return ("\(CodecPathLabels(group: row.group).software)路径", .sub)
+            }
             if row.hardwareAccelerated == true {
                 let path = row.group == "解码" ? "硬解通过" : "硬编通过"
                 return (path + (row.gpuRegistryID == nil ? " · 设备未报告" : " · 归属待确认"), .statusInfo)
@@ -247,7 +249,7 @@ struct CodecCaseCard: View {
         if active { return phase }
         if let code = row.failureOSStatus { return (row.failureStage ?? "VT 错误") + " · \(code)" }
         if row.status == .passed && row.ok && !row.hasValidMeasurement { return "测量值无效" }
-        let mode = row.mode.hasPrefix("软件") ? "软件路径" : "强制硬件"
+        let mode = CodecPathLabels(group: row.group).mode(row.mode)
         guard let stats = row.statistics else { return mode + " · 预热 8 帧" }
         if !row.hasValidMeasurement { return "输出 \(stats.frames)/\(stats.requestedFrames) 帧" }
         return mode + " · \(stats.frames) 帧"

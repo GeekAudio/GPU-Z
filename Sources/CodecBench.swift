@@ -645,7 +645,7 @@ enum CodecBench {
             if s != noErr { out.errorText = "提交帧失败 (\(s))"; break }
             out.submittedFrames += 1
         }
-        progress?(0.9, cancellation?.isCancelled == true ? BenchCancellation.waitingDescription : "已提交测量帧，等待编码输出与排空（软件 HEVC 可能较久）")
+        progress?(0.9, cancellation?.isCancelled == true ? BenchCancellation.waitingDescription : "已提交测量帧，等待编码输出与排空（HEVC 软编可能较久）")
         let drainStatus = VTCompressionSessionCompleteFrames(ses, untilPresentationTimeStamp: .invalid)
         out.elapsed = elapsed(since: start)
         out.cpuUsage = cpuUsage(from: cpuStart, to: processCPUTime())
@@ -948,7 +948,7 @@ enum CodecBench {
         }
         for caseID in selectedIDs {
             if let c = cases.first(where: { CodecTestPlan.id(group: "编码", item: $0.label, mode: $0.mode.rawValue) == caseID }) {
-                let label = "编码 \(c.label) · \(c.mode.rawValue)"
+                let label = "编码 \(c.label) · \(CodecPathLabels(group: "编码").mode(c.mode.rawValue))"
                 let base = Double(rows.count)
                 progress(base / total, label)
                 let result: BenchOutcome
@@ -970,7 +970,7 @@ enum CodecBench {
                 throw CodecTestPlan.SelectionError.unknown(caseID)
             }
             let item = decodeName(codec, width: width)
-            let label = "解码 \(item) · \(mode.rawValue)"
+            let label = "解码 \(item) · \(CodecPathLabels(group: "解码").mode(mode.rawValue))"
             let base = Double(rows.count)
             progress(base / total, label)
             let result: BenchOutcome

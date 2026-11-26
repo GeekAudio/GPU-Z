@@ -135,7 +135,7 @@ struct MainView: View {
                     .buttonStyle(NativeButtonStyle())
                     .disabled(model.refreshing || (model.running && !model.runningSoftwareTests))
                     .accessibilityIdentifier("software-comparison")
-                    .help("查看已有成绩，补测软件编码与解码项目")
+                    .help("查看已有成绩，补测软编和软解项目")
                 Text("已选 \(hardwareSelectionCount)/\(CodecTestPlan.hardwareCaseIDs.count)").font(DesignTokens.Font.small).foregroundColor(.sub)
                 Button("全选") { model.selectCases(CodecTestPlan.hardwareCaseIDs) }
                     .buttonStyle(BorderlessButtonStyle()).disabled(model.running)

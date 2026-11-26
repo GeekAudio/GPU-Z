@@ -47,11 +47,11 @@ struct SoftwareComparisonView: View {
             Button {
                 model.startAllSoftwareTests()
             } label: {
-                Label(softwareCount == 0 ? "软件已测完" : "补测 \(softwareCount) 项软件", systemImage: "play.fill")
+                Label(softwareCount == 0 ? "软编和软解已测完" : "补测 \(softwareCount) 项软编解码", systemImage: "play.fill")
             }
             .disabled(!model.canRun || softwareCount == 0)
             .accessibilityIdentifier("software-run-all")
-            .help("补测缺少有效成绩的软件编码与解码项目")
+            .help("补测缺少有效成绩的软编和软解项目")
 
             Button {
                 model.startAllSoftwareComparisons()
@@ -70,7 +70,7 @@ struct SoftwareComparisonView: View {
 
     private var matrix: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("软件编码")
+            Text("软编")
                 .font(DesignTokens.Font.title3)
             HStack(spacing: 10) {
                 ForEach(["1080p", "4K"], id: \.self) { resolution in
@@ -86,7 +86,7 @@ struct SoftwareComparisonView: View {
             Hairline()
 
             HStack {
-                Text("软件解码")
+                Text("软解")
                     .font(DesignTokens.Font.title3)
                 Spacer(minLength: 8)
                 Text("同一固定码流")
@@ -114,11 +114,11 @@ struct SoftwareComparisonView: View {
         HStack(spacing: 10) {
             ProgressView(value: model.progress)
                 .frame(width: 120)
-                .accessibilityLabel("软件测试进度")
+                .accessibilityLabel("补测进度")
             Text(String(format: "%.0f%%", model.progress * 100))
                 .font(DesignTokens.Font.small.monospacedDigit())
                 .frame(width: 36, alignment: .trailing)
-            Text(model.status.isEmpty ? "正在运行软件测试…" : model.status)
+            Text(model.status.isEmpty ? "正在补测…" : model.status)
                 .font(DesignTokens.Font.small)
                 .foregroundColor(DesignTokens.Text.secondary)
                 .lineLimit(1)
@@ -160,12 +160,13 @@ struct SoftwareComparisonView: View {
         let hardwareRow = model.comparisonResult(for: testCase.hardwareID)
         let ratio = pairedRatio(softwareRow: softwareRow, hardwareRow: hardwareRow)
         let isSelected = selectedCaseID == testCase.softwareID
+        let paths = CodecPathLabels(group: testCase.group)
         let spokenResult = [
-            ratio.map { String(format: "硬件 FPS 除以软件 FPS，%.2f 倍", $0) },
-            "软件 \(measurementValue(softwareRow))",
+            ratio.map { "\(paths.hardware) FPS 除以\(paths.software) FPS，" + String(format: "%.2f 倍", $0) },
+            "\(paths.software) \(measurementValue(softwareRow))",
             softwareStatus(softwareRow),
             softwareRow.map(systemCPUUsageLabel),
-            "硬件 \(measurementValue(hardwareRow))",
+            "\(paths.hardware) \(measurementValue(hardwareRow))",
             hardwareRow.map(systemCPUUsageLabel)
         ].compactMap { $0 }.joined(separator: "，")
 
@@ -179,20 +180,20 @@ struct SoftwareComparisonView: View {
                     Spacer(minLength: 2)
                     if let ratio {
                         HStack(alignment: .firstTextBaseline, spacing: 5) {
-                            Text("硬件 / 软件 FPS")
+                            Text("\(paths.ratio) FPS")
                                 .foregroundColor(DesignTokens.Text.secondary)
                             Text(String(format: "%.2f×", ratio))
                                 .font(DesignTokens.Font.small.monospacedDigit().weight(.semibold))
                         }
                         .font(DesignTokens.Font.small)
                         .help(testCase.group == "编码"
-                              ? "硬件 FPS 除以软件 FPS。成绩可来自不同轮次，两路编码画质可能不同。"
-                              : "硬件 FPS 除以软件 FPS。成绩可来自不同轮次，两路解码使用同一份固定码流。")
+                              ? "硬编 FPS 除以软编 FPS。成绩可来自不同轮次，两路编码画质可能不同。"
+                              : "硬解 FPS 除以软解 FPS。成绩可来自不同轮次，两路解码使用同一份固定码流。")
                     }
                 }
 
-                measurementRow("软件", caseID: testCase.softwareID, row: softwareRow, isSoftware: true)
-                measurementRow("硬件", caseID: testCase.hardwareID, row: hardwareRow, isSoftware: false)
+                measurementRow(paths.software, caseID: testCase.softwareID, row: softwareRow, isSoftware: true)
+                measurementRow(paths.hardware, caseID: testCase.hardwareID, row: hardwareRow, isSoftware: false)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .padding(.horizontal, 10)
@@ -242,6 +243,7 @@ struct SoftwareComparisonView: View {
         let softwareRow = model.comparisonResult(for: testCase.softwareID)
         let hardwareRow = model.comparisonResult(for: testCase.hardwareID)
         let ratio = pairedRatio(softwareRow: softwareRow, hardwareRow: hardwareRow)
+        let paths = CodecPathLabels(group: testCase.group)
         let softwarePending = !model.pendingComparisonCases([testCase.softwareID]).isEmpty
         let pairPending = !model.pendingComparisonCases([testCase.softwareID, testCase.hardwareID]).isEmpty
 
@@ -254,7 +256,7 @@ struct SoftwareComparisonView: View {
             Button {
                 model.startSoftwareTest(caseID: testCase.softwareID)
             } label: {
-                Label("补测软件", systemImage: "play.fill")
+                Label("补测\(paths.software)", systemImage: "play.fill")
             }
             .disabled(!model.canRun || !softwarePending)
             .accessibilityIdentifier("software-run-selected")
@@ -267,13 +269,13 @@ struct SoftwareComparisonView: View {
             .disabled(!model.canRun || !pairPending)
             .accessibilityIdentifier("software-compare-selected")
 
-            Button("软件详情") {
+            Button("\(paths.software)详情") {
                 if let softwareRow { openDetails(softwareRow, softwareRatio: ratio) }
             }
             .disabled(softwareRow == nil)
             .accessibilityIdentifier("software-selected-software-detail")
 
-            Button("硬件详情") {
+            Button("\(paths.hardware)详情") {
                 if let hardwareRow { openDetails(hardwareRow, softwareRatio: ratio) }
             }
             .disabled(hardwareRow == nil)

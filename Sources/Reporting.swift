@@ -115,8 +115,11 @@ enum SelfTest {
         guard let plannedCaseIDs else { return nil }
         let rowsByID = Dictionary(grouping: results, by: \.id)
         let names = plannedCaseIDs.map { id -> String in
-            guard let row = rowsByID[id]?.first else { return id }
-            return "\(row.group) · \(row.item) · \(row.mode)"
+            if let row = rowsByID[id]?.first {
+                return "\(row.group) · \(row.item) · \(CodecPathLabels(group: row.group).mode(row.mode))"
+            }
+            guard let testCase = CodecTestPlan.cases.first(where: { $0.id == id }) else { return id }
+            return "\(testCase.group) · \(testCase.item) · \(CodecPathLabels(group: testCase.group).mode(testCase.mode))"
         }
         if plannedCaseIDs.count == 1, let name = names.first { return "单项测试：\(name)" }
         if plannedCaseIDs.isEmpty { return "本轮未选择测试项目" }
@@ -152,7 +155,8 @@ enum SelfTest {
         if !results.isEmpty {
             lines += ["", "【实测结果】"]
             for row in results {
-                lines.append("\(row.group) · \(row.item) · \(row.mode) · \(statusLabel(row))")
+                let paths = CodecPathLabels(group: row.group)
+                lines.append("\(row.group) · \(row.item) · \(paths.mode(row.mode)) · \(statusLabel(row))")
                 lines.append("  原始字段：status=\(row.status.rawValue) · ok=\(row.ok) · fps=\(row.fps) · NVIDIA标记=\(row.isNVIDIAConfirmed)")
                 if row.hasValidMeasurement {
                     lines.append(String(format: "  吞吐：%.2f fps", row.fps))
@@ -170,7 +174,7 @@ enum SelfTest {
                         lines.append("  测试进程 CPU：未采集")
                     }
                 }
-                lines.append("  实际引擎：\(row.engine)")
+                lines.append("  实际引擎：\(paths.evidence(row.engine))")
                 if row.group == "编码" {
                     lines.append("  会话 EncoderID：\(row.encoderID.isEmpty ? "未报告" : row.encoderID)")
                     if let quality = row.encoderQualityEvidence {
@@ -199,8 +203,9 @@ enum SelfTest {
             }
             let comparisons = results.compactMap { hardware -> String? in
                 guard let ratio = hardware.softwareRatio(in: results) else { return nil }
-                return String(format: "%@ %@：硬件 / 软件 = %.2f×。仅限本次设置和输入。",
-                              hardware.group, hardware.item, ratio)
+                let paths = CodecPathLabels(group: hardware.group)
+                return String(format: "%@ %@ · %@ = %.2f×。仅限本次设置和输入。",
+                              hardware.group, hardware.item, paths.ratio, ratio)
             }
             if !comparisons.isEmpty {
                 lines += ["【同负载吞吐对照（未匹配输出画质）】"] + comparisons
